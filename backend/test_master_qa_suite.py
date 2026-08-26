@@ -348,7 +348,7 @@ async def run_master_qa_suite():
     saved_resume_ids = []
     for i in range(10):
         tag = f"RESQA{uuid.uuid4().hex[:4].upper()}"
-        fname = f"TCS_JavaLead_{tag}.pdf"
+        fname = f"ABCStaffing_TCS_JavaLead_{tag}.pdf"
         files_10.append(("files", (fname, mock_pdf, "application/pdf")))
 
     upload_10_res = await employee_client.post(
@@ -369,7 +369,7 @@ async def run_master_qa_suite():
     # 5.2 Duplicate Check API
     dup_check = await employee_client.post(
         "/api/resumes/check-duplicates",
-        json={"client_id": abc_client["id"], "items": [{"filename": "TCS_JavaLead_RESQA101.pdf", "candidate_name": "QA Test", "company": "TCS", "role": "Java Lead"}]},
+        json={"client_id": abc_client["id"], "items": [{"filename": "ABCStaffing_TCS_JavaLead_RESQA101.pdf", "candidate_name": "QA Test", "company": "TCS", "role": "Java Lead"}]},
     )
     if dup_check.status_code == 200:
         runner.record_pass("Upload", "Pre-Commit Duplicate Check Endpoint")
@@ -377,7 +377,7 @@ async def run_master_qa_suite():
         runner.record_fail("Upload", "Pre-Commit Duplicate Check Endpoint", "Medium", f"Status: {dup_check.status_code}")
 
     # 5.3 Special Characters & Long Filename Ingestion
-    special_fname = f"Infosys_DevOps_Engineer_Special_Char_#_@_RES{uuid.uuid4().hex[:4].upper()}.pdf"
+    special_fname = f"ABCStaffing_Infosys_DevOps_RES{uuid.uuid4().hex[:4].upper()}.pdf"
     spec_upload = await employee_client.post(
         "/api/resumes/upload",
         data={"client_id": abc_client["id"], "resume_date": date.today().isoformat()},

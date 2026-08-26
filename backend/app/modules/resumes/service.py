@@ -466,7 +466,7 @@ async def process_bulk_upload(
     for file in files:
         filename = file.filename or "resume.pdf"
         file_bytes = await file.read()
-        parsed = parse_resume_filename(filename)
+        parsed = parse_resume_filename(filename, selected_client_name=client.company_name)
 
         target_company = parsed.get("company") or (selected_req.company if selected_req else "General")
         target_role = parsed.get("role") or (selected_req.role if selected_req else "General Role")

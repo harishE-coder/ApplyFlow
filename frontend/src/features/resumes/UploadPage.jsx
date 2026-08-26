@@ -19,6 +19,7 @@ import {
   ArrowRight,
   ShieldAlert,
   Sparkles,
+  Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
@@ -28,7 +29,7 @@ import api from '@/services/api';
 import { formatDate, cn } from '@/utils/cn';
 
 export function UploadPage() {
-  const { user, isEmployee } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { success, error: toastError, warning } = useToast();
@@ -90,57 +91,75 @@ export function UploadPage() {
     }
   }, [location.state]);
 
-  // Client-side Filename Parser matching ApplyFlow standard:
-  // e.g. TCS_JavaDeveloper_RES101.pdf or Amazon_Frontend_RahulSharma.pdf
-  const parseFilename = (filename) => {
+  // Client-side Filename Parser matching Locked Standard:
+  // ServiceClient_Company_RoleOrRoleID_ResumeIdentifier.pdf
+  const parseFilename = (filename, selectedClientName = '') => {
     const stem = filename.replace(/\.[^/.]+$/, '').trim();
-    const cleaned = stem.replace(/[\s\-]+/g, '_');
-    const parts = cleaned.split('_').filter(Boolean);
+    const parts = stem.split('_').filter(Boolean);
 
-    if (parts.length >= 3) {
-      const company = parts[0];
-      const roleParts = parts.slice(1, -1);
-      const role = roleParts.join(' ') || 'Software Engineer';
-      const lastPart = parts[parts.length - 1];
-
-      let resume_id_tag = null;
-      let candidate_name = lastPart;
-
-      const idMatch = lastPart.match(/(RES\d+|Resume\d+|\d+)/i);
-      if (idMatch && idMatch[0].length >= 3) {
-        resume_id_tag = idMatch[0].toUpperCase();
-        candidate_name = `Candidate ${resume_id_tag}`;
-      } else {
-        // Space out camel case if needed
-        candidate_name = lastPart.replace(/([a-z])([A-Z])/g, '$1 $2');
-      }
-
+    // Rule 2: Minimum 4 segments required
+    if (parts.length < 4) {
       return {
-        company: company.length <= 4 ? company.toUpperCase() : company.charAt(0).toUpperCase() + company.slice(1),
-        role: role.charAt(0).toUpperCase() + role.slice(1),
-        resume_id_tag,
-        candidate_name: candidate_name.charAt(0).toUpperCase() + candidate_name.slice(1),
-        status: 'valid', // 'valid' | 'duplicate' | 'needs_review'
-        error: null,
-      };
-    } else if (parts.length === 2) {
-      return {
-        company: parts[0].charAt(0).toUpperCase() + parts[0].slice(1),
-        role: parts[1].replace(/_/g, ' '),
-        resume_id_tag: null,
-        candidate_name: 'Candidate Name',
+        service_client: parts[0] ? parts[0].replace(/([a-z])([A-Z])/g, '$1 $2').trim() : 'Unknown Client',
+        company: parts[1] || 'General',
+        role: parts[2] || '',
+        resume_identifier: parts[parts.length - 1] || '',
+        resume_id_tag: parts[parts.length - 1] || '',
         status: 'needs_review',
-        error: 'Missing candidate name or ID in filename',
+        error: 'Invalid filename format. Expected: ServiceClient_Company_RoleOrRoleID_ResumeIdentifier.pdf',
+        clientMatch: false,
       };
     }
 
+    const rawClient = parts[0];
+    const rawCompany = parts[1];
+    const rawRoleParts = parts.slice(2, -1);
+    const rawIdentifier = parts[parts.length - 1];
+
+    // 1. Service Client
+    const serviceClient = rawClient.replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+
+    // 2. Target Company
+    const company = rawCompany.length <= 4 ? rawCompany.toUpperCase() : rawCompany.charAt(0).toUpperCase() + rawCompany.slice(1);
+
+    // 3. Role or Role ID (e.g. JavaDeveloper, SDEII, INF-PY-02, TCS-JAVA-01)
+    const roleRaw = rawRoleParts.join('_');
+    let role = roleRaw;
+    if (roleRaw.includes('-') || (/\d/.test(roleRaw) && /[A-Za-z]/.test(roleRaw) && roleRaw.length <= 10)) {
+      if (/^SDE[IVX\d]+$/i.test(roleRaw)) {
+        role = roleRaw.replace(/^(SDE)([IVX\d]+)$/i, '$1 $2').toUpperCase();
+      } else {
+        role = roleRaw.toUpperCase();
+      }
+    } else {
+      role = roleRaw.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').trim();
+      role = role.charAt(0).toUpperCase() + role.slice(1);
+    }
+
+    // 4. Resume Identifier
+    const resumeIdentifier = rawIdentifier;
+
+    // Rule 1: Service Client match verification
+    let clientMatch = true;
+    let error = null;
+    if (selectedClientName) {
+      const normParsed = rawClient.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normSelected = selectedClientName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      if (normParsed !== normSelected) {
+        clientMatch = false;
+        error = `Filename client does not match selected Service Client.`;
+      }
+    }
+
     return {
-      company: 'General',
-      role: stem.replace(/_/g, ' '),
-      resume_id_tag: null,
-      candidate_name: stem.replace(/_/g, ' '),
-      status: 'needs_review',
-      error: 'Format should be Company_Role_Candidate.pdf',
+      service_client: serviceClient,
+      company,
+      role,
+      resume_identifier: resumeIdentifier,
+      resume_id_tag: resumeIdentifier,
+      status: clientMatch ? 'valid' : 'needs_review',
+      error,
+      clientMatch,
     };
   };
 
@@ -155,22 +174,27 @@ export function UploadPage() {
       return;
     }
 
+    const selectedClientObj = assignedClients.find((c) => c.id === selectedClientId);
+    const selectedClientName = selectedClientObj?.company_name || '';
+
     const newQueueItems = pdfFiles.map((file, idx) => {
-      const parsed = parseFilename(file.name);
+      const parsed = parseFilename(file.name, selectedClientName);
       return {
         id: `${file.name}-${Date.now()}-${idx}`,
         file,
         filename: file.name,
         size: (file.size / 1024).toFixed(1) + ' KB',
+        service_client: parsed.service_client,
         company: parsed.company,
         role: parsed.role,
+        resume_identifier: parsed.resume_identifier,
         resume_id_tag: parsed.resume_id_tag || '',
-        candidate_name: parsed.candidate_name,
+        candidate_name: parsed.resume_identifier || 'Candidate',
         status: parsed.status, // 'valid' | 'duplicate' | 'needs_review'
         error: parsed.error,
+        clientMatch: parsed.clientMatch,
         isDuplicate: false,
         duplicateInfo: null,
-        isEditing: false,
       };
     });
 
@@ -195,8 +219,8 @@ export function UploadPage() {
         items: itemsToCheck.map((it) => ({
           filename: it.filename,
           company: it.company,
-          candidate_name: it.candidate_name,
-          resume_id_tag: it.resume_id_tag || null,
+          candidate_name: it.resume_identifier || it.candidate_name,
+          resume_id_tag: it.resume_identifier || it.resume_id_tag || null,
         })),
       };
 
@@ -232,9 +256,34 @@ export function UploadPage() {
     }
   };
 
-  // Re-run duplicate check if selectedClientId changes
+  // Re-run client match and duplicate check if selectedClientId changes
   useEffect(() => {
     if (selectedClientId && queue.length > 0) {
+      const selectedClientObj = assignedClients.find((c) => c.id === selectedClientId);
+      const selName = selectedClientObj?.company_name || '';
+
+      setQueue((prev) =>
+        prev.map((it) => {
+          const normParsed = (it.service_client || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const normSelected = selName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const match = !selName || normParsed === normSelected;
+
+          if (it.status !== 'duplicate') {
+            if (match && it.company && it.role && it.resume_identifier) {
+              return { ...it, status: 'valid', error: null, clientMatch: true };
+            } else if (!match) {
+              return {
+                ...it,
+                status: 'needs_review',
+                error: 'Filename client does not match selected Service Client.',
+                clientMatch: false,
+              };
+            }
+          }
+          return it;
+        })
+      );
+
       runDuplicateCheck(queue, selectedClientId);
     }
   }, [selectedClientId]);
@@ -245,10 +294,21 @@ export function UploadPage() {
       prev.map((it) => {
         if (it.id === id) {
           const updated = { ...it, [field]: value };
-          // If valid inputs provided, clear needs_review
-          if (updated.company && updated.role && updated.candidate_name && updated.status === 'needs_review') {
+          const selectedClientObj = assignedClients.find((c) => c.id === selectedClientId);
+          const selName = selectedClientObj?.company_name || '';
+
+          const normParsed = (updated.service_client || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const normSelected = selName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const match = !selName || normParsed === normSelected;
+
+          if (match && updated.company && updated.role && updated.resume_identifier) {
             updated.status = 'valid';
             updated.error = null;
+            updated.clientMatch = true;
+          } else if (!match) {
+            updated.status = 'needs_review';
+            updated.error = 'Filename client does not match selected Service Client.';
+            updated.clientMatch = false;
           }
           return updated;
         }
@@ -279,6 +339,16 @@ export function UploadPage() {
       filesToUpload = queue.filter((it) => it.status !== 'duplicate');
     }
 
+    // Filter out items that have client mismatch or errors unless corrected
+    const hasUnresolvedErrors = filesToUpload.some((it) => it.status === 'needs_review');
+    if (hasUnresolvedErrors) {
+      toastError(
+        'Review Required',
+        'Some files have client mismatches or invalid formats. Correct them inline before uploading.'
+      );
+      return;
+    }
+
     if (filesToUpload.length === 0) {
       toastError('No Files', 'No valid files selected for upload.');
       return;
@@ -301,71 +371,71 @@ export function UploadPage() {
 
     let progressInterval;
     try {
-        progressInterval = setInterval(() => {
-          setUploadProgress((prev) => {
-            if (prev >= 90) return prev;
-            return prev + 15;
+      progressInterval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 90) return prev;
+          return prev + 15;
+        });
+        setUploadProgressCount((prev) => ({
+          current: Math.min(prev.current + 5, filesToUpload.length),
+          total: filesToUpload.length,
+        }));
+      }, 300);
+
+      const res = await api.post('/resumes/upload', formData, {
+        headers: {
+          'Content-Type': undefined,
+        },
+      });
+
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      setUploadProgressCount({ current: filesToUpload.length, total: filesToUpload.length });
+
+      const uploaded = res.data?.saved_count ?? filesToUpload.length;
+      const dupCount = queue.filter((it) => it.status === 'duplicate').length;
+      const reviewedCount = queue.filter((it) => it.status === 'needs_review').length;
+
+      setUploadSuccessSummary({
+        uploaded: uploaded || 0,
+        duplicates: dupCount || 0,
+        reviewed: reviewedCount || 0,
+      });
+
+      setQueue([]);
+
+      // Trigger immediate dashboard update event across the application
+      window.dispatchEvent(new CustomEvent('resume-uploaded', { detail: { count: uploaded } }));
+      window.dispatchEvent(new CustomEvent('application-created', { detail: { count: uploaded } }));
+      window.dispatchEvent(new CustomEvent('application-updated', { detail: { count: uploaded } }));
+
+      // Confetti celebration (safely guarded)
+      try {
+        if (typeof confetti === 'function') {
+          confetti({
+            particleCount: 80,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors: ['#0D6EFD', '#FF8A00', '#16A34A'],
           });
-          setUploadProgressCount((prev) => ({
-            current: Math.min(prev.current + 5, filesToUpload.length),
-            total: filesToUpload.length,
-          }));
-        }, 300);
-
-        const res = await api.post('/resumes/upload', formData, {
-          headers: {
-            'Content-Type': undefined,
-          },
-        });
-
-        clearInterval(progressInterval);
-        setUploadProgress(100);
-        setUploadProgressCount({ current: filesToUpload.length, total: filesToUpload.length });
-
-        const uploaded = res.data?.saved_count ?? filesToUpload.length;
-        const dupCount = queue.filter((it) => it.status === 'duplicate').length;
-        const reviewedCount = queue.filter((it) => it.status === 'needs_review').length;
-
-        setUploadSuccessSummary({
-          uploaded: uploaded || 0,
-          duplicates: dupCount || 0,
-          reviewed: reviewedCount || 0,
-        });
-
-        setQueue([]);
-
-        // Trigger immediate dashboard update event across the application
-        window.dispatchEvent(new CustomEvent('resume-uploaded', { detail: { count: uploaded } }));
-        window.dispatchEvent(new CustomEvent('application-created', { detail: { count: uploaded } }));
-        window.dispatchEvent(new CustomEvent('application-updated', { detail: { count: uploaded } }));
-
-        // Confetti celebration (safely guarded)
-        try {
-          if (typeof confetti === 'function') {
-            confetti({
-              particleCount: 80,
-              spread: 70,
-              origin: { y: 0.6 },
-              colors: ['#0D6EFD', '#FF8A00', '#16A34A'],
-            });
-          }
-        } catch (e) {
-          // Ignore confetti error
         }
-
-        success('Batch Ingested', `Successfully uploaded ${uploaded} candidate resumes.`);
-      } catch (err) {
-        if (progressInterval) clearInterval(progressInterval);
-        const errorMsg =
-          err.response?.data?.detail ||
-          err.response?.data?.message ||
-          err.message ||
-          'Failed to upload batch.';
-        toastError('Upload Failed', errorMsg);
-      } finally {
-        if (progressInterval) clearInterval(progressInterval);
-        setIsUploading(false);
+      } catch (e) {
+        // Ignore confetti error
       }
+
+      success('Batch Ingested', `Successfully uploaded ${uploaded} candidate resumes.`);
+    } catch (err) {
+      if (progressInterval) clearInterval(progressInterval);
+      const errorMsg =
+        err.response?.data?.detail ||
+        err.response?.data?.message ||
+        err.message ||
+        'Failed to upload batch.';
+      toastError('Upload Failed', errorMsg);
+    } finally {
+      if (progressInterval) clearInterval(progressInterval);
+      setIsUploading(false);
+    }
   };
 
   const duplicateCount = queue.filter((it) => it.status === 'duplicate').length;
@@ -390,7 +460,7 @@ export function UploadPage() {
             </span>
           </div>
           <p className="text-small text-[#64748B] mt-1">
-            Batch PDF ingestion with automatic entity extraction, pre-commit review, and duplicate detection.
+            Batch PDF ingestion with locked 4-segment entity extraction, client verification, and duplicate check.
           </p>
         </div>
 
@@ -448,41 +518,33 @@ export function UploadPage() {
               />
             </div>
             <p className="text-caption text-[#64748B] mt-1">
-              Every resume in this batch will inherit this date.
+              Quota date credited to candidate submissions.
             </p>
           </div>
         </div>
       </div>
 
-      {/* 3. Drag & Drop Upload Surface (Multi-file, PDF only, 1-200 files) */}
-      <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-card">
-        <h3 className="text-small font-bold uppercase tracking-wider text-[#64748B] mb-4 flex items-center gap-2">
-          <UploadCloud className="w-4 h-4 text-[#0D6EFD]" />
-          Drop PDF Resumes (1 – 200 files)
-        </h3>
-
+      {/* Drag & Drop Ingestion Zone with Standard Help Text & Live Examples */}
+      <div className="bg-white rounded-3xl border border-[#E2E8F0] shadow-card p-6 sm:p-8 space-y-6">
         <div
           onDragOver={(e) => {
             e.preventDefault();
             setIsDragOver(true);
           }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            setIsDragOver(false);
-          }}
+          onDragLeave={() => setIsDragOver(false)}
           onDrop={(e) => {
             e.preventDefault();
             setIsDragOver(false);
-            if (e.dataTransfer.files?.length > 0) {
+            if (e.dataTransfer.files) {
               handleFilesSelected(e.dataTransfer.files);
             }
           }}
           onClick={() => fileInputRef.current?.click()}
           className={cn(
-            'p-10 rounded-2xl border-2 border-dashed transition-all duration-150 flex flex-col items-center justify-center text-center cursor-pointer select-none',
+            'border-2 border-dashed rounded-2xl p-8 sm:p-10 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 group',
             isDragOver
               ? 'border-[#0D6EFD] bg-[#EFF6FF]'
-              : 'border-[#CBD5E1] bg-[#F8FAFC]/70 hover:bg-[#F8FAFC] hover:border-[#94A3B8]'
+              : 'border-[#CBD5E1] bg-[#F8FAFC] hover:bg-[#F1F5F9] hover:border-[#94A3B8]'
           )}
         >
           <input
@@ -491,7 +553,7 @@ export function UploadPage() {
             multiple
             accept=".pdf,application/pdf"
             onChange={(e) => {
-              if (e.target.files?.length > 0) {
+              if (e.target.files) {
                 handleFilesSelected(e.target.files);
               }
             }}
@@ -506,9 +568,31 @@ export function UploadPage() {
             Drag & drop PDF resumes, or <span className="text-[#0D6EFD] underline underline-offset-4">browse</span>
           </h4>
 
-          <p className="text-small text-[#64748B] max-w-md mt-1 mb-4">
-            Supports batch ingestion up to 200 PDF files. Standard filename format like <code className="font-mono text-caption text-[#081226] bg-[#E2E8F0] px-1 py-0.5 rounded">TCS_JavaDeveloper_RES101.pdf</code> automatically extracts company and role.
+          <p className="text-small text-[#081226] font-semibold max-w-lg mt-2 mb-2">
+            Use the format <code className="font-mono text-caption text-[#0D6EFD] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-lg">ServiceClient_Company_RoleOrRoleID_ResumeIdentifier.pdf</code>
           </p>
+
+          {/* Direct Standard Examples */}
+          <div className="w-full max-w-xl bg-white p-3.5 rounded-xl border border-[#E2E8F0] shadow-xs text-left my-3 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-caption font-bold text-[#64748B] uppercase tracking-wider">
+              <Info className="w-3.5 h-3.5 text-[#0D6EFD]" />
+              <span>Standard Filename Examples</span>
+            </div>
+            <div className="grid grid-cols-1 gap-1 font-mono text-[11px] text-[#334155]">
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-[#F8FAFC]">
+                <span>ABCStaffing_TCS_JavaDeveloper_RES101.pdf</span>
+                <span className="text-[10px] text-[#64748B] font-sans">Client: ABC Staffing | TCS | Java Developer</span>
+              </div>
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-[#F8FAFC]">
+                <span>TalentHub_Amazon_SDEII_RES205.pdf</span>
+                <span className="text-[10px] text-[#64748B] font-sans">Client: Talent Hub | Amazon | SDE II</span>
+              </div>
+              <div className="flex items-center justify-between p-1.5 rounded-lg bg-[#F8FAFC]">
+                <span>NextHire_Infosys_INF-PY-02_RahulKumar.pdf</span>
+                <span className="text-[10px] text-[#64748B] font-sans">Client: NextHire | Infosys | INF-PY-02</span>
+              </div>
+            </div>
+          </div>
 
           <Button
             variant="primary"
@@ -518,6 +602,7 @@ export function UploadPage() {
               e.stopPropagation();
               fileInputRef.current?.click();
             }}
+            className="mt-2"
           >
             Choose PDF Files
           </Button>
@@ -574,16 +659,16 @@ export function UploadPage() {
             </div>
           </div>
 
-          {/* Review Table with Inline Inputs */}
+          {/* Review Table with 4-Segment Columns & Inline Inputs */}
           <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
             <table className="w-full text-left text-small border-collapse">
               <thead className="sticky top-0 bg-[#F8FAFC] border-b border-[#E2E8F0] text-caption font-bold text-[#64748B] uppercase select-none">
                 <tr>
                   <th className="px-4 py-3">File Name</th>
-                  <th className="px-4 py-3">Company (Parsed)</th>
-                  <th className="px-4 py-3">Role Position</th>
-                  <th className="px-4 py-3">Resume ID</th>
-                  <th className="px-4 py-3">Candidate Name</th>
+                  <th className="px-4 py-3">Service Client</th>
+                  <th className="px-4 py-3">Target Company</th>
+                  <th className="px-4 py-3">Role / Role ID</th>
+                  <th className="px-4 py-3">Resume Identifier</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3 text-right">Action</th>
                 </tr>
@@ -601,8 +686,8 @@ export function UploadPage() {
                         : 'hover:bg-[#F8FAFC]'
                     )}
                   >
-                    {/* File Name */}
-                    <td className="px-4 py-3 max-w-[180px]">
+                    {/* 1. File Name */}
+                    <td className="px-4 py-3 max-w-[170px]">
                       <div className="flex items-center gap-2 min-w-0">
                         <FileText className="w-4 h-4 text-[#0D6EFD] shrink-0" />
                         <span className="font-mono text-caption text-[#081226] truncate" title={row.filename}>
@@ -611,48 +696,56 @@ export function UploadPage() {
                       </div>
                     </td>
 
-                    {/* Company (Editable) */}
+                    {/* 2. Service Client (Editable) */}
+                    <td className="px-4 py-3 w-36">
+                      <input
+                        type="text"
+                        value={row.service_client}
+                        onChange={(e) => handleUpdateRow(row.id, 'service_client', e.target.value)}
+                        className={cn(
+                          'w-full h-[34px] px-2 rounded-lg text-caption font-semibold bg-white border focus:outline-none',
+                          row.clientMatch === false
+                            ? 'border-rose-300 text-rose-700 bg-rose-50/50'
+                            : 'border-[#E2E8F0] text-[#081226] focus:border-[#0D6EFD]'
+                        )}
+                        placeholder="Service Client"
+                      />
+                    </td>
+
+                    {/* 3. Target Company (Editable) */}
                     <td className="px-4 py-3 w-32">
                       <input
                         type="text"
                         value={row.company}
                         onChange={(e) => handleUpdateRow(row.id, 'company', e.target.value)}
                         className="w-full h-[34px] px-2 rounded-lg text-caption font-bold bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
+                        placeholder="e.g. TCS"
                       />
                     </td>
 
-                    {/* Role (Editable) */}
-                    <td className="px-4 py-3 w-40">
+                    {/* 4. Role / Role ID (Editable) */}
+                    <td className="px-4 py-3 w-36">
                       <input
                         type="text"
                         value={row.role}
                         onChange={(e) => handleUpdateRow(row.id, 'role', e.target.value)}
                         className="w-full h-[34px] px-2 rounded-lg text-caption bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
+                        placeholder="e.g. Java Developer"
                       />
                     </td>
 
-                    {/* Resume ID (Editable) */}
-                    <td className="px-4 py-3 w-28">
+                    {/* 5. Resume Identifier (Editable) */}
+                    <td className="px-4 py-3 w-32">
                       <input
                         type="text"
-                        value={row.resume_id_tag}
+                        value={row.resume_identifier}
                         placeholder="e.g. RES101"
-                        onChange={(e) => handleUpdateRow(row.id, 'resume_id_tag', e.target.value)}
+                        onChange={(e) => handleUpdateRow(row.id, 'resume_identifier', e.target.value)}
                         className="w-full h-[34px] px-2 rounded-lg text-caption font-mono bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
                       />
                     </td>
 
-                    {/* Candidate Name (Editable) */}
-                    <td className="px-4 py-3 w-40">
-                      <input
-                        type="text"
-                        value={row.candidate_name}
-                        onChange={(e) => handleUpdateRow(row.id, 'candidate_name', e.target.value)}
-                        className="w-full h-[34px] px-2 rounded-lg text-caption font-semibold bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
-                      />
-                    </td>
-
-                    {/* Status Badge */}
+                    {/* 6. Status Badge */}
                     <td className="px-4 py-3 whitespace-nowrap">
                       {row.status === 'valid' && (
                         <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0]">
@@ -668,18 +761,21 @@ export function UploadPage() {
                         </span>
                       )}
                       {row.status === 'needs_review' && (
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FEF2F2] text-[#EF4444] border border-[#FECACA]">
-                          ❌ Needs Review
+                        <span
+                          className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FEF2F2] text-[#EF4444] border border-[#FECACA] cursor-help"
+                          title={row.error || 'Metadata requires review before upload.'}
+                        >
+                          {row.clientMatch === false ? '❌ Client Mismatch' : '❌ Needs Review'}
                         </span>
                       )}
                     </td>
 
-                    {/* Row delete */}
+                    {/* 7. Row delete */}
                     <td className="px-4 py-3 text-right">
                       <button
                         type="button"
                         onClick={() => handleRemoveRow(row.id)}
-                        className="p-1.5 text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#FEF2F2] rounded-lg transition-colors"
+                        className="p-1.5 text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#FEF2F2] rounded-lg transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -698,139 +794,113 @@ export function UploadPage() {
                   <RefreshCw className="w-4 h-4 text-[#0D6EFD] animate-spin" />
                   Uploading batch to Google Drive & database repository...
                 </span>
-                <span className="font-mono text-[#FF8A00]">
-                  {uploadProgressCount.current} / {uploadProgressCount.total} ({uploadProgress}%)
-                </span>
+                <span>{uploadProgress}%</span>
               </div>
-              <div className="w-full h-3 rounded-full bg-[#1E2E4E] overflow-hidden">
+              <div className="w-full h-3 rounded-full bg-[#101F3D] overflow-hidden">
                 <div
-                  className="h-full bg-gradient-to-r from-[#0D6EFD] to-[#FF8A00] rounded-full transition-all duration-300"
+                  className="h-full bg-gradient-to-r from-[#0D6EFD] to-[#16A34A] rounded-full transition-all duration-300"
                   style={{ width: `${uploadProgress}%` }}
                 />
               </div>
+              <p className="text-caption text-[#94A3B8] text-right">
+                Uploaded {uploadProgressCount.current} of {uploadProgressCount.total} files
+              </p>
             </div>
           )}
 
-          {/* Action Buttons Row */}
-          {!isUploading && (
-            <div className="p-6 bg-[#F8FAFC] border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                {duplicateCount > 0 && (
-                  <Button
-                    variant="outline"
-                    size="md"
-                    icon={SkipForward}
-                    onClick={handleSkipDuplicates}
-                  >
-                    Skip Duplicates ({duplicateCount})
-                  </Button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setQueue([])}
-                  className="text-small font-semibold text-[#64748B] hover:text-[#EF4444] px-3 py-2 transition-colors cursor-pointer"
+          {/* Action Bar */}
+          <div className="p-6 bg-[#F8FAFC] border-t border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="md"
+                onClick={() => setQueue([])}
+                disabled={isUploading}
+              >
+                Clear Batch
+              </Button>
+
+              {duplicateCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="md"
+                  icon={SkipForward}
+                  onClick={handleSkipDuplicates}
+                  disabled={isUploading}
+                  className="text-[#D97706] border-[#FDE68A] hover:bg-[#FFFBEB]"
                 >
-                  Clear Queue
-                </button>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {duplicateCount > 0 ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      size="md"
-                      onClick={() => handleCommitUpload('skip_duplicates')}
-                    >
-                      Skip Duplicates & Upload New ({validCount + reviewCount})
-                    </Button>
-                    <Button
-                      variant="primary"
-                      size="lg"
-                      icon={UploadCloud}
-                      onClick={() => handleCommitUpload('replace_existing')}
-                    >
-                      Upload All (Replace Existing)
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    icon={UploadCloud}
-                    onClick={() => handleCommitUpload('all_valid')}
-                    className="h-[48px] px-8"
-                  >
-                    Upload All Valid Resumes ({queue.length})
-                  </Button>
-                )}
-              </div>
+                  Skip {duplicateCount} Duplicate(s)
+                </Button>
+              )}
             </div>
-          )}
+
+            <div className="flex items-center gap-3">
+              <Button
+                variant="primary"
+                size="lg"
+                icon={UploadCloud}
+                isLoading={isUploading}
+                onClick={() => handleCommitUpload(duplicateCount > 0 ? 'skip_duplicates' : 'all_valid')}
+                disabled={validCount === 0 || reviewCount > 0}
+              >
+                Commit & Upload {validCount} Valid Resumes →
+              </Button>
+            </div>
+          </div>
         </motion.div>
       )}
 
-      {/* Success Summary Screen */}
+      {/* Ingestion Completion Dialog / Summary Card */}
       {uploadSuccessSummary && (
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-white rounded-3xl border border-[#BBF7D0] bg-[#F0FDF4]/30 shadow-card p-8 text-center space-y-6"
+          className="bg-[#F0FDF4] border border-[#BBF7D0] p-6 rounded-3xl shadow-card space-y-4"
         >
-          <div className="w-16 h-16 rounded-2xl bg-[#DCFCE7] text-[#16A34A] flex items-center justify-center mx-auto border border-[#86EFAC]">
-            <CheckCircle2 className="w-8 h-8" />
-          </div>
-
-          <div>
-            <h3 className="text-h2 font-extrabold text-[#081226] tracking-tight">
-              Batch Upload Successful!
-            </h3>
-            <p className="text-body text-[#475569] max-w-md mx-auto mt-1">
-              Candidate resumes have been parsed, validated, and stored in the ATS candidate repository.
-            </p>
-          </div>
-
-          {/* Summary Stats Table */}
-          <div className="max-w-md mx-auto bg-white rounded-2xl border border-[#E2E8F0] shadow-xs overflow-hidden">
-            <div className="grid grid-cols-3 divide-x divide-[#F1F5F9] p-4 text-center">
-              <div>
-                <p className="text-caption font-bold uppercase text-[#16A34A]">Uploaded</p>
-                <p className="text-h2 font-extrabold text-[#081226] mt-0.5">
-                  {uploadSuccessSummary.uploaded}
-                </p>
-              </div>
-              <div>
-                <p className="text-caption font-bold uppercase text-[#FF8A00]">Duplicates</p>
-                <p className="text-h2 font-extrabold text-[#081226] mt-0.5">
-                  {uploadSuccessSummary.duplicates}
-                </p>
-              </div>
-              <div>
-                <p className="text-caption font-bold uppercase text-[#0D6EFD]">Reviewed</p>
-                <p className="text-h2 font-extrabold text-[#081226] mt-0.5">
-                  {uploadSuccessSummary.reviewed}
-                </p>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-[#16A34A] text-white flex items-center justify-center">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-h3 font-bold text-[#166534]">
+                Batch Ingestion Successful!
+              </h3>
+              <p className="text-small text-[#15803D]">
+                Candidate resumes are now saved, linked to client pipeline, and updated across your daily quota metrics.
+              </p>
             </div>
           </div>
 
-          {/* Success Action Buttons */}
-          <div className="flex items-center justify-center gap-4 pt-2">
-            <Button
-              variant="primary"
-              size="lg"
-              onClick={() => navigate('/candidates')}
-              className="h-[48px] px-8"
-            >
-              View Uploaded Resumes →
-            </Button>
+          <div className="grid grid-cols-3 gap-4 pt-2">
+            <div className="bg-white p-4 rounded-2xl border border-[#BBF7D0] text-center">
+              <p className="text-[11px] font-bold uppercase text-[#64748B]">Successfully Saved</p>
+              <p className="text-h2 font-black text-[#16A34A] mt-1">{uploadSuccessSummary.uploaded}</p>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-[#BBF7D0] text-center">
+              <p className="text-[11px] font-bold uppercase text-[#64748B]">Duplicates Skipped</p>
+              <p className="text-h2 font-black text-[#D97706] mt-1">{uploadSuccessSummary.duplicates}</p>
+            </div>
+            <div className="bg-white p-4 rounded-2xl border border-[#BBF7D0] text-center">
+              <p className="text-[11px] font-bold uppercase text-[#64748B]">Needs Review</p>
+              <p className="text-h2 font-black text-[#64748B] mt-1">{uploadSuccessSummary.reviewed}</p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2">
             <Button
               variant="outline"
-              size="lg"
+              size="md"
               onClick={() => setUploadSuccessSummary(null)}
-              className="h-[48px]"
             >
-              Upload More Resumes
+              Upload Another Batch
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              icon={ArrowRight}
+              onClick={() => navigate('/candidates')}
+            >
+              View Candidates Workspace
             </Button>
           </div>
         </motion.div>
