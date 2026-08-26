@@ -39,6 +39,7 @@ export function SubAdminsPage() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     password: '',
     client_ids: [],
     employee_ids: [],
@@ -50,9 +51,11 @@ export function SubAdminsPage() {
   const [editData, setEditData] = useState({
     name: '',
     email: '',
+    phone: '',
     password: '',
     is_active: true,
   });
+  const [safeDeleteModalSA, setSafeDeleteModalSA] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
 
@@ -65,7 +68,7 @@ export function SubAdminsPage() {
     setIsLoading(true);
     try {
       const [saRes, clRes, empRes] = await Promise.all([
-        api.get('/sub-admins'),
+        api.get('/sub-admins?status=all'),
         api.get('/clients'),
         api.get('/users?role=employee'),
       ]);
@@ -128,7 +131,7 @@ export function SubAdminsPage() {
       await api.post('/sub-admins', formData);
       showToast(`Sub-Admin ${formData.name} created successfully!`);
       setIsCreateModalOpen(false);
-      setFormData({ name: '', email: '', password: '', client_ids: [], employee_ids: [] });
+      setFormData({ name: '', email: '', phone: '', password: '', client_ids: [], employee_ids: [] });
       fetchData();
     } catch (err) {
       console.error('Failed to create sub-admin:', err);
@@ -147,6 +150,7 @@ export function SubAdminsPage() {
       const payload = {
         name: editData.name,
         email: editData.email,
+        phone: editData.phone || null,
         is_active: editData.is_active,
       };
       if (editData.password) {
@@ -161,6 +165,56 @@ export function SubAdminsPage() {
       showToast(err.response?.data?.detail || 'Failed to update sub-admin');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Deactivate Sub-Admin
+  const handleDeactivateSubAdmin = async (sa) => {
+    try {
+      await api.post(`/sub-admins/${sa.id}/deactivate`);
+      showToast(`Sub-Admin ${sa.name} deactivated.`);
+      fetchData();
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Failed to deactivate sub-admin');
+    }
+  };
+
+  // Activate Sub-Admin
+  const handleActivateSubAdmin = async (sa) => {
+    try {
+      await api.post(`/sub-admins/${sa.id}/activate`);
+      showToast(`Sub-Admin ${sa.name} reactivated.`);
+      fetchData();
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Failed to activate sub-admin');
+    }
+  };
+
+  // Delete Sub-Admin
+  const handleDeleteSubAdmin = async (sa) => {
+    try {
+      await api.delete(`/sub-admins/${sa.id}`);
+      showToast(`Sub-Admin ${sa.name} deleted.`);
+      fetchData();
+    } catch (err) {
+      if (err.response?.status === 400 || err.response?.data?.detail?.includes('Reassign')) {
+        setSafeDeleteModalSA(sa);
+      } else {
+        showToast(err.response?.data?.detail || 'Failed to delete sub-admin');
+      }
+    }
+  };
+
+  // Reassign to Admin & Delete Sub-Admin
+  const handleReassignAndDelete = async () => {
+    if (!safeDeleteModalSA) return;
+    try {
+      await api.delete(`/sub-admins/${safeDeleteModalSA.id}?reassign_to_admin=true`);
+      showToast(`Resources reassigned to Super Admin and ${safeDeleteModalSA.name} deleted.`);
+      setSafeDeleteModalSA(null);
+      fetchData();
+    } catch (err) {
+      showToast(err.response?.data?.detail || 'Failed to reassign and delete');
     }
   };
 
@@ -318,27 +372,64 @@ export function SubAdminsPage() {
                         <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-[#8B5CF6]/20 text-[#C4B5FD] border border-[#8B5CF6]/30">
                           Sub-Admin
                         </span>
+                        <span
+                          className={cn(
+                            'text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                            sa.is_active
+                              ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                              : 'bg-slate-500/15 text-slate-400 border-slate-500/30'
+                          )}
+                        >
+                          {sa.is_active ? 'Active' : 'Inactive'}
+                        </span>
                       </div>
                       <p className="text-xs text-[#94A3B8] mt-0.5">{sa.email}</p>
+                      {sa.phone && <p className="text-[11px] text-[#64748B]">📞 {sa.phone}</p>}
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditData({
-                        name: sa.name,
-                        email: sa.email,
-                        password: '',
-                        is_active: sa.is_active,
-                      });
-                      setEditModalSubAdmin(sa);
-                    }}
-                    className="p-2 text-[#94A3B8] hover:text-white hover:bg-[#101F3D] rounded-xl transition-colors cursor-pointer"
-                    title="Edit Sub-Admin"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditData({
+                          name: sa.name,
+                          email: sa.email,
+                          phone: sa.phone || '',
+                          password: '',
+                          is_active: sa.is_active,
+                        });
+                        setEditModalSubAdmin(sa);
+                      }}
+                      className="p-2 text-[#94A3B8] hover:text-white hover:bg-[#101F3D] rounded-xl transition-colors cursor-pointer"
+                      title="Edit Sub-Admin"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => (sa.is_active ? handleDeactivateSubAdmin(sa) : handleActivateSubAdmin(sa))}
+                      className={cn(
+                        'p-2 rounded-xl transition-colors cursor-pointer',
+                        sa.is_active
+                          ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-500/10'
+                          : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10'
+                      )}
+                      title={sa.is_active ? 'Deactivate Sub-Admin' : 'Activate Sub-Admin'}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteSubAdmin(sa)}
+                      className="p-2 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded-xl transition-colors cursor-pointer"
+                      title="Delete Sub-Admin"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Scope Stats */}
@@ -487,6 +578,21 @@ export function SubAdminsPage() {
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       placeholder="e.g. akhil@applyflow.com"
                       className="w-full pl-10 pr-4 py-2.5 bg-[#050C1B] border border-[#1E2E4E] rounded-xl text-sm text-white focus:outline-none focus:border-[#2563EB]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#94A3B8] mb-1.5">
+                    Phone Number (Optional)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder="e.g. 9876543210"
+                      className="w-full px-4 py-2.5 bg-[#050C1B] border border-[#1E2E4E] rounded-xl text-sm text-white focus:outline-none focus:border-[#2563EB]"
                     />
                   </div>
                 </div>
@@ -843,6 +949,19 @@ export function SubAdminsPage() {
 
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-wider text-[#94A3B8] mb-1.5">
+                    Phone Number (Optional)
+                  </label>
+                  <input
+                    type="tel"
+                    value={editData.phone}
+                    onChange={(e) => setEditData({ ...editData, phone: e.target.value })}
+                    placeholder="e.g. 9876543210"
+                    className="w-full px-4 py-2.5 bg-[#050C1B] border border-[#1E2E4E] rounded-xl text-sm text-white focus:outline-none focus:border-[#2563EB]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[#94A3B8] mb-1.5">
                     New Password (optional)
                   </label>
                   <input
@@ -871,6 +990,58 @@ export function SubAdminsPage() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* SAFE DELETE REASSIGN MODAL */}
+      <AnimatePresence>
+        {safeDeleteModalSA && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#081226] border border-[#1E2E4E] rounded-[28px] p-6 sm:p-8 max-w-lg w-full shadow-2xl space-y-5"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Reassign Delegated Scope</h3>
+                  <p className="text-xs text-[#94A3B8]">Safe delete requires transferring managed resources.</p>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-[#050C1B] border border-[#1E2E4E] text-xs text-[#94A3B8] leading-relaxed">
+                <p className="font-semibold text-white mb-1">
+                  Sub-Admin <span className="text-amber-400">{safeDeleteModalSA.name}</span> currently manages{' '}
+                  <span className="text-white font-bold">{safeDeleteModalSA.assigned_clients_count || 0} client(s)</span> and{' '}
+                  <span className="text-white font-bold">{safeDeleteModalSA.assigned_employees_count || 0} recruiter(s)</span>.
+                </p>
+                <p>
+                  Deleting without reassignment would orphan these team members. Choose &quot;Reassign to Super Admin&quot; to transfer ownership to Super Admin and safely remove this Sub-Admin.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSafeDeleteModalSA(null)}
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold text-[#94A3B8] hover:text-white hover:bg-[#101F3D] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReassignAndDelete}
+                  className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-lg transition-all cursor-pointer"
+                >
+                  Reassign to Admin &amp; Delete
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

@@ -1,31 +1,67 @@
 import uuid
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class RequirementBase(BaseModel):
-    client_id: uuid.UUID
+    client_id: uuid.UUID | None = None
     company: str  # e.g. "TCS", "Infosys", "Amazon"
-    role: str     # e.g. "Java Developer", "Frontend Engineer"
-    role_code: str # e.g. "TCS-JAVA-01"
-    status: str = "active"
+    job_title: str | None = None  # e.g. "Java Developer"
+    role: str | None = None       # e.g. "Java Developer" (alias)
+    role_code: str | None = None  # e.g. "TCS-JAVA-01"
+    job_url: str | None = None    # e.g. "https://careers.tcs.com/job/12345"
+    priority: str = "Medium"      # "High", "Medium", "Low"
+    notes: str | None = None
+    status: str = "active"        # "active", "done", "archived"
 
 
 class RequirementCreate(RequirementBase):
-    pass
+    @model_validator(mode="after")
+    def populate_titles(self):
+        if not self.job_title and self.role:
+            self.job_title = self.role
+        elif not self.role and self.job_title:
+            self.role = self.job_title
+        elif not self.job_title and not self.role:
+            self.job_title = "Open Role"
+            self.role = "Open Role"
+
+        if not self.role_code:
+            prefix = "".join(c for c in self.company if c.isalnum())[:3].upper() or "JOB"
+            role_part = "".join(c for c in (self.job_title or "ROLE") if c.isalnum())[:4].upper()
+            self.role_code = f"{prefix}-{role_part}-01"
+        return self
 
 
 class RequirementUpdate(BaseModel):
     company: str | None = None
+    job_title: str | None = None
     role: str | None = None
     role_code: str | None = None
+    job_url: str | None = None
+    priority: str | None = None
+    notes: str | None = None
     status: str | None = None
 
 
-class RequirementResponse(RequirementBase):
+class RequirementResponse(BaseModel):
     id: uuid.UUID
+    client_id: uuid.UUID
     client_name: str
+    company: str
+    job_title: str
+    role: str
+    role_code: str
+    job_url: str | None = None
+    priority: str = "Medium"
+    notes: str | None = None
+    status: str = "active"
+    created_by: uuid.UUID | None = None
+    creator_name: str | None = None
+    completed_by: uuid.UUID | None = None
+    completer_name: str | None = None
     created_at: datetime
+    completed_at: datetime | None = None
     total_resumes: int = 0
     total_applications: int = 0
 
@@ -36,8 +72,11 @@ class RequirementShort(BaseModel):
     id: uuid.UUID
     client_id: uuid.UUID
     company: str
+    job_title: str | None = None
     role: str
     role_code: str
+    job_url: str | None = None
+    priority: str = "Medium"
     status: str
 
     model_config = {"from_attributes": True}

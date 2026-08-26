@@ -542,6 +542,38 @@ export function AdminDashboard() {
         )}
       </div>
 
+      {/* 2.5 JOB OPENINGS TASK BOARD CARDS */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <KPICard
+          title="Active Jobs"
+          value={overview?.active_jobs ?? 0}
+          subtitle="Open recruitment tasks"
+          icon={Briefcase}
+          variant="blue"
+        />
+        <KPICard
+          title="Completed Today"
+          value={overview?.completed_today_jobs ?? 0}
+          subtitle="Marked done today"
+          icon={CheckCircle2}
+          variant="success"
+        />
+        <KPICard
+          title="High Priority Jobs"
+          value={overview?.high_priority_jobs ?? 0}
+          subtitle="Urgent hiring tasks"
+          icon={AlertCircle}
+          variant="orange"
+        />
+        <KPICard
+          title="Jobs Without URL"
+          value={overview?.jobs_without_url ?? 0}
+          subtitle="No direct posting link"
+          icon={Layers}
+          variant="default"
+        />
+      </div>
+
       {/* 3. RECRUITER PERFORMANCE TABLE (Target, Submitted, Remaining, Completion % with 0-50% Red, 51-99% Orange, 100%+ Green) */}
       <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-[#F1F5F9]">

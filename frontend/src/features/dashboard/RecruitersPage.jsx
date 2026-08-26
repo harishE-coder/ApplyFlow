@@ -55,6 +55,7 @@ export function RecruitersPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addName, setAddName] = useState('');
   const [addEmail, setAddEmail] = useState('');
+  const [addPhone, setAddPhone] = useState('');
   const [addPassword, setAddPassword] = useState('Password@123');
   const [addAssignedClientIds, setAddAssignedClientIds] = useState([]);
   const [addDailyTarget, setAddDailyTarget] = useState(25);
@@ -65,6 +66,7 @@ export function RecruitersPage() {
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [editName, setEditName] = useState('');
   const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
   const [editPassword, setEditPassword] = useState('');
   const [editAssignedClientIds, setEditAssignedClientIds] = useState([]);
   const [updatingRecruiter, setUpdatingRecruiter] = useState(false);
@@ -81,6 +83,9 @@ export function RecruitersPage() {
   const [targetClientId, setTargetClientId] = useState('');
   const [targetValue, setTargetValue] = useState(25);
   const [savingTarget, setSavingTarget] = useState(false);
+
+  // 5. SAFE DELETE DEACTIVATE MODAL STATE
+  const [safeDeleteModalEmp, setSafeDeleteModalEmp] = useState(null);
 
   // Fetch recruiters and clients
   const fetchData = async () => {
@@ -107,6 +112,7 @@ export function RecruitersPage() {
   const handleOpenAddModal = () => {
     setAddName('');
     setAddEmail('');
+    setAddPhone('');
     setAddPassword('Password@123');
     setAddAssignedClientIds(clients.length > 0 ? [clients[0].id] : []);
     setAddDailyTarget(25);
@@ -123,6 +129,7 @@ export function RecruitersPage() {
       await api.post('/employees', {
         name: addName.trim(),
         email: addEmail.trim().toLowerCase(),
+        phone: addPhone.trim() || null,
         password: addPassword,
         assigned_client_ids: addAssignedClientIds,
         daily_target: Number(addDailyTarget) || 25,
@@ -146,6 +153,7 @@ export function RecruitersPage() {
     setEditingEmployee(emp);
     setEditName(emp.name);
     setEditEmail(emp.email);
+    setEditPhone(emp.phone || '');
     setEditPassword('');
     const assignedIds = emp.assigned_clients ? emp.assigned_clients.map((c) => c.client_id || c.id) : [];
     setEditAssignedClientIds(assignedIds);
@@ -162,6 +170,7 @@ export function RecruitersPage() {
       const payload = {
         name: editName.trim(),
         email: editEmail.trim().toLowerCase(),
+        phone: editPhone.trim() || null,
         assigned_client_ids: editAssignedClientIds,
       };
       if (editPassword) payload.password = editPassword;
@@ -239,7 +248,11 @@ export function RecruitersPage() {
       success('Recruiter Deleted', `${emp.name} deleted successfully.`);
       fetchData();
     } catch (err) {
-      toastError('Cannot Delete', err.response?.data?.detail || 'This recruiter has historical resumes or applications.');
+      if (err.response?.status === 400 || err.response?.data?.detail?.includes('historical')) {
+        setSafeDeleteModalEmp(emp);
+      } else {
+        toastError('Cannot Delete', err.response?.data?.detail || 'This recruiter has historical records.');
+      }
     }
   };
 
@@ -593,6 +606,14 @@ export function RecruitersPage() {
           />
 
           <Input
+            label="Phone Number (Optional)"
+            type="tel"
+            placeholder="e.g. 9876543210"
+            value={addPhone}
+            onChange={(e) => setAddPhone(e.target.value)}
+          />
+
+          <Input
             label="Temporary Password"
             type="text"
             required
@@ -671,6 +692,14 @@ export function RecruitersPage() {
             required
             value={editEmail}
             onChange={(e) => setEditEmail(e.target.value)}
+          />
+
+          <Input
+            label="Phone Number (Optional)"
+            type="tel"
+            placeholder="e.g. 9876543210"
+            value={editPhone}
+            onChange={(e) => setEditPhone(e.target.value)}
           />
 
           <Input
@@ -794,6 +823,46 @@ export function RecruitersPage() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* 5. SAFE DELETE DEACTIVATE MODAL */}
+      <Modal
+        isOpen={!!safeDeleteModalEmp}
+        onClose={() => setSafeDeleteModalEmp(null)}
+        title="Historical Records Protected"
+        subtitle="This employee has historical activity and cannot be permanently deleted."
+      >
+        <div className="space-y-4">
+          <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-small text-amber-900 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">
+                {safeDeleteModalEmp?.name} has historical submissions, attendance, or chat records.
+              </p>
+              <p className="text-caption text-amber-700 mt-1 leading-relaxed">
+                To preserve recruitment audit logs, analytics, and client submission histories, this employee cannot be hard deleted. Deactivating will block future logins while preserving all past work intact.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-2 flex justify-end gap-3">
+            <Button variant="outline" size="md" onClick={() => setSafeDeleteModalEmp(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="md"
+              onClick={async () => {
+                const empToDeact = safeDeleteModalEmp;
+                setSafeDeleteModalEmp(null);
+                await handleDeactivateRecruiter(empToDeact);
+              }}
+              className="!bg-amber-600 hover:!bg-amber-700 text-white font-bold"
+            >
+              Deactivate Instead
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

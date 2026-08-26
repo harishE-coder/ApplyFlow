@@ -7,7 +7,8 @@ class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
-    role: str  # "admin", "sub_admin", "employee", "client"
+    phone: str | None = None
+    role: str = "employee"  # "admin", "sub_admin", "employee", "client"
     status: str = "active"
     client_id: uuid.UUID | None = None
     assigned_client_ids: list[uuid.UUID] = []
@@ -16,6 +17,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
+    phone: str | None = None
     password: str | None = None
     role: str | None = None
     status: str | None = None
@@ -47,6 +49,7 @@ class UserDetailResponse(BaseModel):
     id: uuid.UUID
     name: str
     email: str
+    phone: str | None = None
     role: str
     status: str = "active"
     client_id: uuid.UUID | None = None
@@ -62,6 +65,9 @@ class EmployeePerformance(BaseModel):
     id: uuid.UUID
     name: str
     email: str
+    phone: str | None = None
+    status: str = "active"
+    is_active: bool = True
     assigned_clients: list[AssignedClientInfo] = []
     total_uploads: int = 0
     today_uploads: int = 0
@@ -77,6 +83,7 @@ class SubAdminCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
+    phone: str | None = None
     client_ids: list[uuid.UUID] = []
     employee_ids: list[uuid.UUID] = []
 
@@ -84,15 +91,19 @@ class SubAdminCreate(BaseModel):
 class SubAdminUpdate(BaseModel):
     name: str | None = None
     email: EmailStr | None = None
+    phone: str | None = None
     password: str | None = None
     is_active: bool | None = None
     status: str | None = None
+    client_ids: list[uuid.UUID] | None = None
+    employee_ids: list[uuid.UUID] | None = None
 
 
 class SubAdminResponse(BaseModel):
     id: uuid.UUID
     name: str
     email: str
+    phone: str | None = None
     role: str = "sub_admin"
     status: str = "active"
     is_active: bool

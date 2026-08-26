@@ -339,6 +339,31 @@ export function EmployeeDashboard() {
         />
       </div>
 
+      {/* JOB OPENINGS TASK STRIP */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <KPICard
+          title="Active Job Openings"
+          value={data?.active_jobs ?? 0}
+          subtitle="Assigned recruitment tasks"
+          icon={Briefcase}
+          variant="blue"
+        />
+        <KPICard
+          title="Completed Today"
+          value={data?.completed_today_jobs ?? 0}
+          subtitle="Tasks finished today"
+          icon={CheckCircle2}
+          variant="success"
+        />
+        <KPICard
+          title="High Priority Jobs"
+          value={data?.high_priority_jobs ?? 0}
+          subtitle="Immediate submissions needed"
+          icon={Target}
+          variant="orange"
+        />
+      </div>
+
       {/* 70% Left / 30% Right Split Flagship Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* LEFT COLUMN: 70% (Col span 8) */}

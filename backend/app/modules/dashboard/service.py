@@ -27,6 +27,24 @@ from app.modules.dashboard.schemas import (
 from app.modules.resumes.service import get_allowed_client_ids
 
 
+def _safe_date(val) -> date | None:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    if isinstance(val, str):
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                return datetime.strptime(val[:10], "%Y-%m-%d").date()
+            except Exception:
+                return None
+    return None
+
+
 def _generate_date_series(days: int = 7) -> list[str]:
     today = datetime.utcnow()
     return [(today - timedelta(days=i)).strftime("%d %b") for i in range(days - 1, -1, -1)]
@@ -210,6 +228,23 @@ async def get_admin_overview(
     emp_users = (await db.execute(emp_list_q.order_by(User.name))).scalars().all()
     assigned_employees = [{"id": str(u.id), "name": u.name, "email": u.email} for u in emp_users]
 
+    # Job Openings Task Board telemetry
+    current_date = date.today()
+    job_q = select(Requirement)
+    if target_client_ids is not None:
+        job_q = job_q.where(Requirement.client_id.in_(target_client_ids))
+    all_jobs = (await db.execute(job_q)).scalars().all()
+    active_jobs = sum(1 for j in all_jobs if j.status == "active")
+    completed_today_jobs = sum(1 for j in all_jobs if j.status == "done" and _safe_date(j.completed_at) == current_date)
+    high_priority_jobs = sum(1 for j in all_jobs if j.status == "active" and (j.priority or "").lower() == "high")
+    jobs_without_url = sum(1 for j in all_jobs if j.status == "active" and not j.job_url)
+
+    job_completion_trend = []
+    for i in range(6, -1, -1):
+        d = current_date - timedelta(days=i)
+        cnt = sum(1 for j in all_jobs if j.status == "done" and _safe_date(j.completed_at) == d)
+        job_completion_trend.append({"date": d.strftime("%Y-%m-%d"), "day": d.strftime("%a"), "count": cnt})
+
     # Trends
     date_labels = _generate_date_series(7)
     trend = [
@@ -234,6 +269,11 @@ async def get_admin_overview(
         today_applications=today_applications,
         target_sum=target_sum,
         target_completion_pct=target_completion,
+        active_jobs=active_jobs,
+        completed_today_jobs=completed_today_jobs,
+        high_priority_jobs=high_priority_jobs,
+        jobs_without_url=jobs_without_url,
+        job_completion_trend=job_completion_trend,
         daily_uploads_trend=trend,
         applications_trend=trend,
         application_status_distribution=status_dist,
@@ -536,6 +576,46 @@ async def get_employee_dashboard(
             )
         )
 
+    # Job Openings Task Board telemetry for Employee
+    job_emp_q = (
+        select(Requirement)
+        .options(selectinload(Requirement.completer))
+        .where(Requirement.client_id.in_(target_clients))
+    )
+    all_emp_jobs = (await db.execute(job_emp_q)).scalars().all()
+    emp_active_jobs = sum(1 for j in all_emp_jobs if j.status == "active")
+    emp_completed_today_jobs = sum(1 for j in all_emp_jobs if j.status == "done" and _safe_date(j.completed_at) == date.today())
+    emp_high_priority_jobs = sum(1 for j in all_emp_jobs if j.status == "active" and (j.priority or "").lower() == "high")
+
+    def _get_sort_key(j):
+        dt = j.completed_at
+        if isinstance(dt, datetime):
+            return dt
+        if isinstance(dt, str):
+            try:
+                return datetime.fromisoformat(dt.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.min
+        return datetime.min
+
+    recent_done = [j for j in all_emp_jobs if j.status == "done"]
+    recent_done.sort(key=_get_sort_key, reverse=True)
+    recent_completed_cards = [
+        {
+            "id": str(j.id),
+            "company": j.company,
+            "job_title": j.job_title or j.role,
+            "completed_at": (
+                j.completed_at.strftime("%d %b %Y")
+                if isinstance(j.completed_at, datetime)
+                else str(j.completed_at or "")[:10]
+            ),
+            "completer_name": j.completer.name if j.completer else "Team Member",
+            "priority": j.priority or "Medium",
+        }
+        for j in recent_done[:5]
+    ]
+
     return EmployeeDashboardResponse(
         today_uploads=today_uploads,
         total_uploads=total_uploads,
@@ -546,6 +626,10 @@ async def get_employee_dashboard(
         target_progress_pct=progress_pct,
         target_summary=target_summary,
         assigned_clients_count=len(assigned_clients),
+        active_jobs=emp_active_jobs,
+        completed_today_jobs=emp_completed_today_jobs,
+        high_priority_jobs=emp_high_priority_jobs,
+        recent_completed_jobs=recent_completed_cards,
         assigned_clients=assigned_client_cards,
         client_requirements=req_summary,
         weekly_trend=trend,
@@ -672,8 +756,8 @@ async def get_client_dashboard(db: AsyncSession, user: User) -> ClientDashboardR
             )
         )
 
-    # 5. Active Requirements Count for this client
-    active_req_count = (
+    # 5. Job Openings Task Board metrics for this client
+    active_jobs = (
         await db.execute(
             select(func.count(Requirement.id)).where(
                 Requirement.client_id == client_id,
@@ -681,6 +765,17 @@ async def get_client_dashboard(db: AsyncSession, user: User) -> ClientDashboardR
             )
         )
     ).scalar() or 0
+
+    completed_jobs = (
+        await db.execute(
+            select(func.count(Requirement.id)).where(
+                Requirement.client_id == client_id,
+                Requirement.status == "done",
+            )
+        )
+    ).scalar() or 0
+
+    completion_rate = round((completed_jobs / max(1, active_jobs + completed_jobs)) * 100, 1)
 
     return ClientDashboardResponse(
         company_name=client_name,
@@ -690,12 +785,15 @@ async def get_client_dashboard(db: AsyncSession, user: User) -> ClientDashboardR
         interview_updates=interview_count,
         offers_count=offers_count,
         joined_count=min(2, offers_count),
+        active_jobs=active_jobs,
+        completed_jobs=completed_jobs,
+        completion_rate=completion_rate,
         application_progress=progress_stages,
         application_timeline=timeline_items,
         hiring_companies=sorted(list(hiring_companies_set)) if hiring_companies_set else ["TCS", "Infosys", "Amazon"],
         total_resumes=applied_count,
         applications_sent=applied_count,
-        active_requirements_count=active_req_count,
+        active_requirements_count=active_jobs,
         total_resumes_received=applied_count,
         total_applications_count=applied_count,
     )

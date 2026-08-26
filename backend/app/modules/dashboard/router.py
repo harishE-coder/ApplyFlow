@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("/admin/overview", response_model=AdminOverviewMetrics, dependencies=[Depends(require_role("admin", "sub_admin"))])
+@router.get("/overview", response_model=AdminOverviewMetrics, dependencies=[Depends(require_role("admin", "sub_admin"))])
 async def get_admin_overview(
     client_id: uuid.UUID | None = Query(None, description="Filter by Service Client ID"),
     employee_id: uuid.UUID | None = Query(None, description="Filter by Employee ID"),

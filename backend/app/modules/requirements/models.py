@@ -1,12 +1,12 @@
 """
-Requirement model.
-A Client (e.g. ABC Staffing) can have multiple job requirements for different target companies (e.g. TCS - Java Developer, Amazon - Frontend Engineer).
+Requirement / Job Opening model.
+Represents a recruitment task/job opening requested by a Service Client or Admin.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -23,23 +23,52 @@ class Requirement(Base):
     )
     company: Mapped[str] = mapped_column(
         String(100), nullable=False, index=True
-    )  # Target company e.g. "TCS", "Infosys", "Amazon"
+    )  # Target hiring company e.g. "TCS", "Infosys", "Amazon"
     role: Mapped[str] = mapped_column(
-        String(150), nullable=False, index=True
+        String(200), nullable=False, index=True
     )  # e.g. "Java Developer", "Frontend Engineer"
+    job_title: Mapped[str | None] = mapped_column(
+        String(200), nullable=True
+    )  # Alias/canonical job title
     role_code: Mapped[str] = mapped_column(
         String(50), nullable=False, index=True
     )  # e.g. "TCS-JAVA-01", "AMZ-FE-02"
+    job_url: Mapped[str | None] = mapped_column(
+        String(500), nullable=True
+    )  # External link to job posting (e.g. careers portal)
+    priority: Mapped[str] = mapped_column(
+        String(20), default="Medium", nullable=False
+    )  # "High", "Medium", "Low"
+    notes: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # Recruiter guidance notes
     status: Mapped[str] = mapped_column(
         String(20), default="active", nullable=False
-    )  # "active", "closed", "on-hold"
+    )  # "active", "done", "archived", "closed"
+
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    completed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     # Relationships
     client: Mapped["Client"] = relationship(  # noqa: F821
         back_populates="requirements", lazy="selectin"
+    )
+    creator: Mapped["User | None"] = relationship(  # noqa: F821
+        foreign_keys=[created_by], lazy="selectin"
+    )
+    completer: Mapped["User | None"] = relationship(  # noqa: F821
+        foreign_keys=[completed_by], lazy="selectin"
     )
     resumes: Mapped[list["Resume"]] = relationship(  # noqa: F821
         back_populates="requirement", lazy="selectin"
@@ -49,4 +78,4 @@ class Requirement(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Requirement {self.role_code}: {self.company} - {self.role}>"
+        return f"<Requirement {self.company} - {self.role} ({self.status})>"

@@ -193,6 +193,31 @@ export function ClientDashboard() {
         />
       </div>
 
+      {/* 2.5 Job Openings Task Board Metrics */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        <KPICard
+          title="Active Job Openings"
+          value={data?.active_jobs ?? 0}
+          subtitle="Open candidate requirements"
+          icon={Briefcase}
+          variant="blue"
+        />
+        <KPICard
+          title="Completed Job Openings"
+          value={data?.completed_jobs ?? 0}
+          subtitle="Fulfilled requirements"
+          icon={CheckCircle2}
+          variant="success"
+        />
+        <KPICard
+          title="Job Completion Rate"
+          value={`${data?.completion_rate ?? 0}%`}
+          subtitle="Requisitions completed"
+          icon={TrendingUp}
+          variant={data?.completion_rate >= 80 ? 'success' : 'orange'}
+        />
+      </div>
+
       {/* 3. Application Progress Chart & Live Stats Breakdown */}
       <div className="bg-white p-6 sm:p-7 rounded-3xl border border-[#E2E8F0] shadow-card space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F1F5F9]">

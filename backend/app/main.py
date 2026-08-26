@@ -77,9 +77,25 @@ async def lifespan(app: FastAPI):
         # Migrate users table columns
         for col, col_type in [
             ("status", "VARCHAR(20) DEFAULT 'active'"),
+            ("phone", "VARCHAR(50)"),
         ]:
             try:
                 await conn.execute(sqlalchemy.text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+            except Exception:
+                pass
+
+        # Migrate requirements table columns
+        for col, col_type in [
+            ("job_title", "VARCHAR(200)"),
+            ("job_url", "VARCHAR(500)"),
+            ("priority", "VARCHAR(20) DEFAULT 'Medium'"),
+            ("notes", "TEXT"),
+            ("created_by", "CHAR(32)"),
+            ("completed_by", "CHAR(32)"),
+            ("completed_at", "TIMESTAMP"),
+        ]:
+            try:
+                await conn.execute(sqlalchemy.text(f"ALTER TABLE requirements ADD COLUMN {col} {col_type}"))
             except Exception:
                 pass
 

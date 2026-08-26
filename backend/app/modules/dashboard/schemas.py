@@ -40,6 +40,13 @@ class AdminOverviewMetrics(BaseModel):
     today_applications: int
     target_sum: int
     target_completion_pct: float
+    # Job Openings Task Board Metrics
+    active_jobs: int = 0
+    completed_today_jobs: int = 0
+    high_priority_jobs: int = 0
+    jobs_without_url: int = 0
+    job_completion_trend: list[dict] = []
+    # Trends
     daily_uploads_trend: list[ChartPoint] = []
     applications_trend: list[ChartPoint] = []
     application_status_distribution: list[dict] = []
@@ -59,6 +66,9 @@ class RequirementSummaryItem(BaseModel):
     company: str
     role: str
     role_code: str
+    job_title: str | None = None
+    job_url: str | None = None
+    priority: str = "Medium"
     status: str
     resumes_count: int
     applications_count: int
@@ -81,6 +91,12 @@ class EmployeeDashboardResponse(BaseModel):
     target_progress_pct: float
     target_summary: TargetSummary | None = None
     assigned_clients_count: int
+    # Job Openings Task Board Metrics
+    active_jobs: int = 0
+    completed_today_jobs: int = 0
+    high_priority_jobs: int = 0
+    recent_completed_jobs: list[dict] = []
+    # Cards & lists
     assigned_clients: list[EmployeeClientCard] = []
     client_requirements: list[RequirementSummaryItem] = []
     weekly_trend: list[ChartPoint] = []
@@ -111,6 +127,11 @@ class ClientDashboardResponse(BaseModel):
     interview_updates: int  # Applications with interview updates
     offers_count: int  # Applications with status = 'Offer'
     joined_count: int = 2
+    # Job Openings Task Board Metrics
+    active_jobs: int = 0
+    completed_jobs: int = 0
+    completion_rate: float = 0.0
+    # Details
     application_progress: list[ApplicationProgressStage] = []
     application_timeline: list[ClientTimelineItem] = []
     hiring_companies: list[str] = []
@@ -118,7 +139,3 @@ class ClientDashboardResponse(BaseModel):
     total_resumes: int = 0
     applications_sent: int = 0
     active_requirements_count: int = 0
-    total_resumes_received: int = 0
-    total_applications_count: int = 0
-    requirements_summary: list[RequirementSummaryItem] = []
-    recent_applications: list[dict] = []
