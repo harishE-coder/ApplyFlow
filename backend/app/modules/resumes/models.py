@@ -1,0 +1,67 @@
+import uuid
+from datetime import date, datetime
+
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.core.database import Base
+
+
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4
+    )
+    display_seq: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        unique=False,
+    )
+
+    candidate_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    company: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # Target company e.g. TCS
+    role: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    resume_id_tag: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )  # Parsed from filename (e.g., "RES1023")
+
+    requirement_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("requirements.id"), nullable=True, index=True
+    )
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clients.id"), nullable=False, index=True
+    )
+    uploaded_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+
+    # Google Drive references
+    drive_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    drive_folder_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    original_filename: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    resume_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    client_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_note_shared: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+
+    upload_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    requirement: Mapped["Requirement"] = relationship(back_populates="resumes", lazy="selectin")  # noqa: F821
+    client: Mapped["Client"] = relationship(lazy="selectin")  # noqa: F821
+    uploader: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
+
+    @property
+    def display_id(self) -> str:
+        """User-facing resume ID: RES1001, RES1002, or parsed tag."""
+        if self.resume_id_tag:
+            return self.resume_id_tag
+        if self.display_seq is not None:
+            return f"RES{1000 + self.display_seq}"
+        return f"RES{abs(hash(str(self.id))) % 9000 + 1000}"
+
+    def __repr__(self) -> str:
+        return f"<Resume {self.display_id} - {self.candidate_name} ({self.company})>"

@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  --color-navy: #081226;
+  --color-navy-dark: #040A17;
+  --color-navy-light: #101F3D;
+  --color-navy-border: #1E2E4E;
+  
+  --color-blue-primary: #2563EB;
+  --color-blue-hover: #1D4ED8;
+  --color-blue-active: #1E40AF;
+  --color-blue-subtle: #EFF6FF;
+  --color-blue-border: #BFDBFE;
+
+  --color-orange-progress: #F97316;
+  --color-orange-subtle: #FFF7ED;
+  --color-orange-border: #FFEDD5;
+
+  --color-bg-main: #F6F8FB;
+  --color-surface-white: #FFFFFF;
+  --color-surface-muted: #F8FAFC;
+  --color-surface-border: #E2E8F0;
+  --color-surface-border-subtle: #F1F5F9;
+
+  --color-status-success: #16A34A;
+  --color-status-success-bg: #F0FDF4;
+  --color-status-success-border: #BBF7D0;
+
+  --color-status-warning: #F59E0B;
+  --color-status-warning-bg: #FFFBEB;
+  --color-status-warning-border: #FDE68A;
+
+  --color-status-danger: #EF4444;
+  --color-status-danger-bg: #FEF2F2;
+  --color-status-danger-border: #FECACA;
+
+  --color-text-main: #081226;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94A3B8;
+  --color-text-dim: #CBD5E1;
+
+  --shadow-card: 0 1px 3px rgba(8, 18, 38, 0.04), 0 4px 12px rgba(8, 18, 38, 0.03);
+  --shadow-card-hover: 0 4px 14px rgba(8, 18, 38, 0.08), 0 1px 3px rgba(8, 18, 38, 0.04);
+  --shadow-sidebar: 0 20px 40px -12px rgba(8, 18, 38, 0.28), 0 4px 16px rgba(8, 18, 38, 0.12);
+  --shadow-topbar: 0 4px 20px -4px rgba(8, 18, 38, 0.05);
+  --shadow-dropdown: 0 10px 30px -4px rgba(8, 18, 38, 0.15), 0 2px 6px rgba(8, 18, 38, 0.05);
+  --shadow-drawer: -8px 0 32px rgba(8, 18, 38, 0.12);
+}
+
+@layer base {
+  * {
+    border-color: #E2E8F0;
+    box-sizing: border-box;
+  }
+  
+  html, body {
+    background-color: #F6F8FB;
+    color: #081226;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar for high-density ATS scanning */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94A3B8;
+  }
+}
+
+/* ATS Typography Hierarchy */
+.text-display {
+  font-size: 40px;
+  line-height: 48px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+}
+.text-h1 {
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.text-h2 {
+  font-size: 24px;
+  line-height: 32px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.text-h3 {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.text-body {
+  font-size: 16px;
+  line-height: 24px;
+}
+.text-small {
+  font-size: 14px;
+  line-height: 20px;
+}
+.text-caption {
+  font-size: 12px;
+  line-height: 16px;
+}
