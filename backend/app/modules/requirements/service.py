@@ -233,6 +233,9 @@ async def update_requirement(
 
 
 async def mark_requirement_done(db: AsyncSession, req_id: uuid.UUID, current_user: User) -> Requirement:
+    if current_user.role != "employee":
+        raise HTTPException(status_code=403, detail="Only employees can mark job openings as completed.")
+
     req = await get_requirement_by_id(db, req_id, current_user)
     if not req:
         raise HTTPException(status_code=404, detail="Job opening not found")

@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, require_role
 from app.modules.users.models import User
 from app.modules.requirements.schemas import (
     RequirementCreate,
@@ -107,8 +107,8 @@ async def update_requirement(
     raise HTTPException(status_code=404, detail="Job opening not found")
 
 
-@router.post("/{req_id}/done", response_model=RequirementResponse)
-@router.post("/{req_id}/complete", response_model=RequirementResponse)
+@router.post("/{req_id}/done", response_model=RequirementResponse, dependencies=[Depends(require_role("employee"))])
+@router.post("/{req_id}/complete", response_model=RequirementResponse, dependencies=[Depends(require_role("employee"))])
 async def mark_requirement_done_endpoint(
     req_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),

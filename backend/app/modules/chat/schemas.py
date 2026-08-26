@@ -61,7 +61,8 @@ class ChatRoomsListResponse(BaseModel):
 
 
 class UnreadCountResponse(BaseModel):
-    total_unread: int
+    total_unread: int = 0
+    unread_count: int = 0
 
 
 class ShareableResumeItem(BaseModel):

@@ -269,6 +269,7 @@ export function RequirementsPage() {
     );
   };
 
+  const isEmployee = !isAdmin && !isSubAdmin && !isClient;
   const canCreate = isAdmin || isSubAdmin || isClient;
   const canEdit = isAdmin || isSubAdmin || isClient;
 
@@ -569,7 +570,7 @@ export function RequirementsPage() {
                       {/* 7. Actions */}
                       <td className="py-4 px-5 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          {activeTab === 'active' && (
+                          {activeTab === 'active' && isEmployee && (
                             <button
                               type="button"
                               onClick={() => setDoneConfirmReq(req)}

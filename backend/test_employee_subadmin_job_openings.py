@@ -321,6 +321,27 @@ async def run_suite():
     else:
         runner.record_fail("Job Openings", "Employee View Assigned Jobs", emp_jobs_res.text)
 
+    # 3.5b Security Boundary: Admin Cannot Mark Job as Done (403)
+    admin_done_attempt = await admin_client.post(f"/api/requirements/{job1['id']}/done")
+    if admin_done_attempt.status_code == 403:
+        runner.record_pass("Security", "Admin Forbidden to Mark Job Done (Employee-Only Rule 403)")
+    else:
+        runner.record_fail("Security", "Admin Mark Done Permission Leak", f"Status: {admin_done_attempt.status_code}")
+
+    # 3.5c Security Boundary: Client Cannot Mark Job as Done (403)
+    client_done_attempt = await client_portal_client.post(f"/api/requirements/{job1['id']}/done")
+    if client_done_attempt.status_code == 403:
+        runner.record_pass("Security", "Client Forbidden to Mark Job Done (Employee-Only Rule 403)")
+    else:
+        runner.record_fail("Security", "Client Mark Done Permission Leak", f"Status: {client_done_attempt.status_code}")
+
+    # 3.5d Security Boundary: Sub-Admin Cannot Mark Job as Done (403)
+    sa_done_attempt = await subadmin_client.post(f"/api/requirements/{job1['id']}/done")
+    if sa_done_attempt.status_code == 403:
+        runner.record_pass("Security", "Sub-Admin Forbidden to Mark Job Done (Employee-Only Rule 403)")
+    else:
+        runner.record_fail("Security", "Sub-Admin Mark Done Permission Leak", f"Status: {sa_done_attempt.status_code}")
+
     # 3.6 Employee Marks Job Opening as Completed (Mark Done)
     mark_done_res = await employee_client.post(f"/api/requirements/{job1['id']}/done")
     if mark_done_res.status_code == 200:

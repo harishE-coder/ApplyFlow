@@ -382,4 +382,4 @@ async def export_room_chat(db: AsyncSession, room_id: uuid.UUID, user: User) -> 
 
 async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
     rooms_res = await get_rooms_for_user(db, user)
-    return UnreadCountResponse(unread_count=rooms_res.total_unread)
+    return UnreadCountResponse(total_unread=rooms_res.total_unread, unread_count=rooms_res.total_unread)
