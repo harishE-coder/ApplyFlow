@@ -6,7 +6,6 @@ import {
   Search,
   Filter,
   FileText,
-  Send,
   Eye,
   Download,
   Share2,
@@ -25,7 +24,9 @@ import {
   RefreshCw,
   Edit2,
   Trash2,
-  ArrowRightLeft,
+  Layers,
+  ArrowRight,
+  Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Avatar } from '@/components/ui/Avatar';
@@ -34,6 +35,7 @@ import { SearchBar } from '@/components/ui/SearchBar';
 import { Dropdown } from '@/components/ui/Dropdown';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
+import { DateFilter } from '@/components/ui/DateFilter';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
@@ -53,6 +55,8 @@ export function ResumesPage() {
   const [search, setSearch] = useState('');
   const [selectedClient, setSelectedClient] = useState('');
   const [selectedCompany, setSelectedCompany] = useState('');
+  const [dateFilter, setDateFilter] = useState('all'); // 'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom'
+  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
   const [page, setPage] = useState(1);
   const pageSize = 25;
 
@@ -82,7 +86,7 @@ export function ResumesPage() {
     api.get('/resumes/companies').then((res) => setCompanies(res.data || [])).catch(() => {});
   }, [searchParams]);
 
-  // Fetch resumes
+  // Fetch resumes with global date filter support
   const fetchResumes = async () => {
     setLoading(true);
     try {
@@ -93,6 +97,13 @@ export function ResumesPage() {
       if (search) params.search = search;
       if (selectedClient) params.client_id = selectedClient;
       if (selectedCompany) params.company = selectedCompany;
+      if (dateFilter && dateFilter !== 'all') {
+        params.date_filter = dateFilter;
+        if (dateFilter === 'custom' && customDate) {
+          params.custom_date = customDate;
+          params.resume_date = customDate;
+        }
+      }
 
       const res = await api.get('/resumes', { params });
       const items = res.data.items || [];
@@ -114,7 +125,7 @@ export function ResumesPage() {
 
   useEffect(() => {
     fetchResumes();
-  }, [search, selectedClient, selectedCompany, page]);
+  }, [search, selectedClient, selectedCompany, dateFilter, customDate, page]);
 
   // Candidate Selection Handler
   const handleSelectCandidate = (candidate) => {
@@ -181,29 +192,6 @@ export function ResumesPage() {
     }
   };
 
-  const [submittingApp, setSubmittingApp] = useState(false);
-
-  const handleSubmitApplication = async (resume) => {
-    if (!resume) return;
-    setSubmittingApp(true);
-    try {
-      await api.post('/applications', {
-        resume_id: resume.id,
-        client_id: resume.client_id,
-        requirement_id: resume.requirement_id,
-        status: 'Submitted',
-        current_round: 'Initial Application',
-      });
-      success('Candidate Submitted', `${resume.candidate_name} submitted to ${resume.company || 'Client'} pipeline.`);
-      window.dispatchEvent(new CustomEvent('application-created', { detail: { resume_id: resume.id } }));
-      window.dispatchEvent(new CustomEvent('application-updated', { detail: { resume_id: resume.id } }));
-    } catch (err) {
-      toastError('Submission Failed', err.response?.data?.detail || 'Failed to submit candidate application');
-    } finally {
-      setSubmittingApp(false);
-    }
-  };
-
   const handleCopyShareLink = (resume) => {
     const shareUrl = `${window.location.origin}/api/resumes/${resume.id}/preview`;
     if (navigator.clipboard?.writeText) {
@@ -234,14 +222,6 @@ export function ResumesPage() {
       label: 'Copy Internal Link',
       onClick: () => handleCopyShareLink(resume),
     });
-
-    if (isEmployee) {
-      items.push({
-        icon: Send,
-        label: 'Submit to Pipeline',
-        onClick: () => handleSubmitApplication(resume),
-      });
-    }
 
     if (isAdmin || isSubAdmin || (isEmployee && resume.uploaded_by === user?.id)) {
       items.push({ divider: true });
@@ -282,7 +262,7 @@ export function ResumesPage() {
               </span>
             </div>
             <p className="text-small text-[#64748B] mt-0.5">
-              Enterprise candidate repository with instant preview, metadata lifecycle, and submission workflows.
+              Enterprise candidate repository with instant preview, auto-synchronized pipelines, and global date filtering.
             </p>
           </div>
 
@@ -310,52 +290,93 @@ export function ResumesPage() {
           </div>
         </div>
 
-        {/* Filter Controls Row */}
-        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 pt-2 border-t border-[#F1F5F9]">
-          <div className={cn(isClient ? 'sm:col-span-8' : 'sm:col-span-6')}>
-            <SearchBar
-              value={search}
-              onChange={setSearch}
-              placeholder="Search candidate name, role, tag ID (e.g. RES1001), or target company..."
-            />
-          </div>
+        {/* Filter Controls Rows */}
+        <div className="space-y-3 pt-2 border-t border-[#F1F5F9]">
+          {/* Row 1: Search, Client, Company */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+            <div className={cn(isClient ? 'sm:col-span-8' : 'sm:col-span-6')}>
+              <SearchBar
+                value={search}
+                onChange={(val) => {
+                  setSearch(val);
+                  setPage(1);
+                }}
+                placeholder="Search candidate name, role, tag ID (e.g. RES101), or target company..."
+              />
+            </div>
 
-          {!isClient && (
-            <div className="sm:col-span-3">
+            {!isClient && (
+              <div className="sm:col-span-3">
+                <select
+                  value={selectedClient}
+                  onChange={(e) => {
+                    setSelectedClient(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-full h-[44px] px-3 rounded-xl text-small font-medium bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0] shadow-xs hover:border-[#CBD5E1] focus:outline-none focus:border-[#2563EB]"
+                >
+                  <option value="">{isAdmin ? 'All Service Clients' : 'All Assigned Clients'}</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.company_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className={cn(isClient ? 'sm:col-span-4' : 'sm:col-span-3')}>
               <select
-                value={selectedClient}
+                value={selectedCompany}
                 onChange={(e) => {
-                  setSelectedClient(e.target.value);
+                  setSelectedCompany(e.target.value);
                   setPage(1);
                 }}
                 className="w-full h-[44px] px-3 rounded-xl text-small font-medium bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0] shadow-xs hover:border-[#CBD5E1] focus:outline-none focus:border-[#2563EB]"
               >
-                <option value="">{isAdmin ? 'All Service Clients' : 'All Assigned Clients'}</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.company_name}
+                <option value="">All Target Companies</option>
+                {companies.map((comp) => (
+                  <option key={comp} value={comp}>
+                    {comp}
                   </option>
                 ))}
               </select>
             </div>
-          )}
+          </div>
 
-          <div className={cn(isClient ? 'sm:col-span-4' : 'sm:col-span-3')}>
-            <select
-              value={selectedCompany}
-              onChange={(e) => {
-                setSelectedCompany(e.target.value);
-                setPage(1);
-              }}
-              className="w-full h-[44px] px-3 rounded-xl text-small font-medium bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0] shadow-xs hover:border-[#CBD5E1] focus:outline-none focus:border-[#2563EB]"
-            >
-              <option value="">All Target Companies</option>
-              {companies.map((comp) => (
-                <option key={comp} value={comp}>
-                  {comp}
-                </option>
-              ))}
-            </select>
+          {/* Row 2: Global Date Filter (Today | Yesterday | This Week | This Month | Custom Date) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-[#F8FAFC]">
+            <div className="flex items-center gap-2">
+              <span className="text-caption font-bold text-[#64748B] uppercase tracking-wider flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-[#0D6EFD]" />
+                Upload Date:
+              </span>
+              <DateFilter
+                selectedPreset={dateFilter === 'all' ? 'all' : dateFilter}
+                customDate={customDate}
+                onFilterChange={({ preset, customDate: cDate }) => {
+                  setDateFilter(preset);
+                  if (cDate) setCustomDate(cDate);
+                  setPage(1);
+                }}
+              />
+              {dateFilter !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFilter('all');
+                    setPage(1);
+                  }}
+                  className="text-caption font-bold text-[#64748B] hover:text-[#081226] underline ml-2 cursor-pointer"
+                >
+                  Show All Dates
+                </button>
+              )}
+            </div>
+
+            <div className="text-caption text-[#64748B]">
+              Showing {resumes.length} of {totalResumes} candidates
+            </div>
           </div>
         </div>
       </div>
@@ -381,7 +402,7 @@ export function ResumesPage() {
               <div className="p-12 text-center text-[#64748B]">
                 <FileText className="w-10 h-10 text-[#CBD5E1] mx-auto mb-2" />
                 <p className="text-small font-semibold text-[#081226]">No Candidates Found</p>
-                <p className="text-caption mt-0.5">Try adjusting search keywords or client filters.</p>
+                <p className="text-caption mt-0.5">Try adjusting search keywords, date filters, or service clients.</p>
               </div>
             ) : (
               resumes.map((cand) => {
@@ -456,137 +477,125 @@ export function ResumesPage() {
             )}
           </div>
 
-          {/* Pagination Footer */}
-          {totalResumes > 0 && (
-            <div className="px-5 py-3.5 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-center justify-between text-caption text-[#64748B]">
-              <div>
-                Page <span className="font-semibold text-[#081226]">{page}</span> of{' '}
-                <span className="font-semibold text-[#081226]">{totalPages}</span>
-              </div>
+          {/* Dense Pagination Footer */}
+          <div className="p-3 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-center justify-between text-caption text-[#64748B]">
+            <span>
+              Page {page} of {totalPages}
+            </span>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(p - 1, 1))}
-                  className="p-1.5 rounded-lg border border-[#E2E8F0] bg-white text-[#081226] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                  className="p-1.5 rounded-lg border border-[#E2E8F0] bg-white text-[#081226] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                icon={ChevronLeft}
+                disabled={page <= 1 || loading}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                Prev
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={ChevronRight}
+                disabled={page >= totalPages || loading}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* RIGHT 40%: Candidate Preview Panel */}
+        {/* RIGHT 40%: Real-Time Candidate Detail Slide-Over (Auto Synced, No Manual Pipeline Submission Button) */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-[#E2E8F0] shadow-card overflow-hidden sticky top-6">
           {selectedResume ? (
-            <div className="flex flex-col h-[calc(100vh-230px)]">
-              <div className="p-5 border-b border-[#F1F5F9] bg-[#F8FAFC]/50 flex items-start justify-between gap-4">
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <Avatar
-                    name={selectedResume.candidate_name}
-                    size="lg"
-                    variant="blue"
-                  />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-h3 font-extrabold text-[#081226] truncate">
-                        {selectedResume.candidate_name}
-                      </h3>
-                      <span className="font-mono text-caption font-bold px-2 py-0.5 rounded bg-white text-[#2563EB] border border-[#BFDBFE] shrink-0">
-                        {selectedResume.resume_id_tag || 'RES1000'}
-                      </span>
-                    </div>
-
-                    <p className="text-small font-semibold text-[#475569] mt-0.5 truncate">
-                      {selectedResume.company} • {selectedResume.role}
-                    </p>
-
+            <div className="flex flex-col h-full max-h-[calc(100vh-140px)]">
+              {/* Header */}
+              <div className="p-5 border-b border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Avatar name={selectedResume.candidate_name} size="md" variant="blue" />
+                  <div>
+                    <h3 className="text-h3 font-bold text-[#081226] tracking-tight">
+                      {selectedResume.candidate_name}
+                    </h3>
                     <p className="text-caption text-[#64748B] mt-0.5">
-                      Service Client: <span className="font-semibold text-[#081226]">{selectedResume.client_name || 'Client'}</span>
+                      Uploaded by {selectedResume.uploader_name || 'Recruiter'} • {formatDate(selectedResume.upload_date)}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <a
-                    href={`/api/resumes/${selectedResume.id}/download`}
-                    target="_blank"
-                    rel="noreferrer"
-                    title="Open Full PDF"
-                    className="p-2 text-[#64748B] hover:text-[#2563EB] hover:bg-white rounded-xl border border-[#E2E8F0] shadow-xs transition-colors shrink-0"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </a>
-
-                  <Dropdown
-                    trigger={
-                      <button
-                        type="button"
-                        className="p-2 text-[#64748B] hover:text-[#081226] hover:bg-white rounded-xl border border-[#E2E8F0] shadow-xs transition-colors shrink-0"
-                      >
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
-                    }
-                    items={getResumeActionMenu(selectedResume)}
-                  />
-                </div>
+                <span className="px-2.5 py-0.5 rounded-full text-caption font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0] flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Auto Synced
+                </span>
               </div>
 
-              {/* Middle: PDF Layout */}
-              <div className="flex-1 p-4 bg-[#F1F5F9]/60 overflow-y-auto">
-                <div className="w-full h-full min-h-[300px] bg-white rounded-xl border border-[#CBD5E1] shadow-inner p-5 flex flex-col justify-between">
-                  <div className="space-y-4">
-                    <div className="border-b border-[#E2E8F0] pb-3 flex items-start justify-between">
-                      <div>
-                        <h4 className="text-h3 font-bold text-[#081226]">
-                          {selectedResume.candidate_name}
-                        </h4>
-                        <p className="text-small text-[#2563EB] font-medium">
-                          {selectedResume.role} Candidate
-                        </p>
-                        <p className="text-caption text-[#64748B] mt-0.5">
-                          Target Account: {selectedResume.company}
-                        </p>
-                      </div>
-                      <FileText className="w-8 h-8 text-[#94A3B8]" />
+              {/* Body: Metadata & PDF Preview */}
+              <div className="p-5 space-y-4 overflow-y-auto flex-1">
+                {/* 4 Essential Metadata Badges */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                    <div className="flex items-center gap-1.5 text-caption font-medium text-[#64748B]">
+                      <Building2 className="w-3.5 h-3.5 text-[#2563EB]" />
+                      <span>Service Client</span>
                     </div>
+                    <p className="text-small font-bold text-[#081226] mt-1 truncate">
+                      {selectedResume.client_name || 'Client Account'}
+                    </p>
+                  </div>
 
-                    <div className="space-y-2 text-small">
-                      <p className="font-bold text-[#081226] text-caption uppercase tracking-wider">
-                        Professional Summary
-                      </p>
-                      <p className="text-caption text-[#475569] leading-relaxed">
-                        Experienced professional with deep expertise in {selectedResume.role} development and enterprise architectures for {selectedResume.company}. Verified background check and technical screening passed.
-                      </p>
+                  <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                    <div className="flex items-center gap-1.5 text-caption font-medium text-[#64748B]">
+                      <Briefcase className="w-3.5 h-3.5 text-[#FF8A00]" />
+                      <span>Target Company</span>
                     </div>
+                    <p className="text-small font-bold text-[#081226] mt-1 truncate">
+                      {selectedResume.company || 'Direct Hiring'}
+                    </p>
+                  </div>
 
-                    <div className="space-y-1.5 text-caption text-[#64748B]">
-                      <div className="flex items-center justify-between py-1 border-b border-[#F8FAFC]">
-                        <span>File Name:</span>
-                        <span className="font-mono text-[#081226] truncate max-w-[200px]">
-                          {selectedResume.original_filename || 'candidate_resume.pdf'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between py-1 border-b border-[#F8FAFC]">
-                        <span>Ingestion Date:</span>
-                        <span className="text-[#081226]">
-                          {formatDate(selectedResume.upload_date)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between py-1">
-                        <span>Recruiter:</span>
-                        <span className="text-[#081226]">
-                          {selectedResume.uploader_name || 'Harish'}
+                  <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                    <div className="flex items-center gap-1.5 text-caption font-medium text-[#64748B]">
+                      <Tag className="w-3.5 h-3.5 text-[#16A34A]" />
+                      <span>Target Role / Code</span>
+                    </div>
+                    <p className="text-small font-bold text-[#081226] mt-1 truncate">
+                      {selectedResume.role || 'Software Engineer'}
+                    </p>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0]">
+                    <div className="flex items-center gap-1.5 text-caption font-medium text-[#64748B]">
+                      <Calendar className="w-3.5 h-3.5 text-[#64748B]" />
+                      <span>Resume Date</span>
+                    </div>
+                    <p className="text-small font-mono font-bold text-[#081226] mt-1">
+                      {selectedResume.resume_date || formatDate(selectedResume.upload_date)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* PDF Document Preview Card */}
+                <div className="p-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-caption font-bold uppercase text-[#64748B] flex items-center gap-1.5">
+                      <FileText className="w-4 h-4 text-[#2563EB]" />
+                      Document Asset
+                    </span>
+                    <span className="text-caption font-mono text-[#64748B]">
+                      {selectedResume.resume_id_tag || 'ID: RES1001'}
+                    </span>
+                  </div>
+
+                  <div className="p-3 bg-white rounded-lg border border-[#E2E8F0] flex items-center justify-between">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <FileText className="w-5 h-5 text-[#2563EB] shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-caption font-bold text-[#081226] truncate" title={selectedResume.original_filename}>
+                          {selectedResume.original_filename || 'Candidate_Resume.pdf'}
+                        </p>
+                        <span className="text-[11px] text-[#64748B]">
+                          Google Drive Cloud Storage Attached
                         </span>
                       </div>
                     </div>
@@ -609,44 +618,26 @@ export function ResumesPage() {
                 </div>
               </div>
 
-              {/* Bottom: Client Notes & Action CTA */}
+              {/* Bottom: Action Bar with Preview PDF, Download, and Share (No Manual Submit Button) */}
               <div className="p-4 bg-white border-t border-[#E2E8F0] space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-caption">
-                    <span className="font-bold text-[#081226]">Recruiter Notes</span>
-                    <span className="text-[#64748B]">Visible to client team</span>
-                  </div>
-                  <textarea
-                    rows={2}
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    placeholder="Add specific candidate notes for the hiring team..."
-                    className="w-full p-2.5 rounded-xl text-caption bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0] focus:outline-none focus:border-[#2563EB] resize-none"
-                  />
+                <div className="flex items-center justify-between text-caption pb-1">
+                  <span className="text-caption text-[#16A34A] font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Auto Synced to Pipeline
+                  </span>
+                  <span className="text-[11px] text-[#64748B]">
+                    Available to client & dashboard
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-2 pt-1">
-                  {isEmployee && (
-                    <Button
-                      variant="primary"
-                      size="md"
-                      icon={Send}
-                      isLoading={submittingApp}
-                      onClick={() => handleSubmitApplication(selectedResume)}
-                      title="Submit Candidate to Pipeline & Progress Daily Target"
-                      className="flex-1 h-[44px] font-bold text-xs bg-[#FF8A00] hover:bg-[#EA580C] text-white border-none shadow-xs"
-                    >
-                      Submit to Pipeline
-                    </Button>
-                  )}
-
                   <Button
-                    variant={isEmployee ? "outline" : "primary"}
+                    variant="primary"
                     size="md"
                     icon={Eye}
                     onClick={() => window.open(`/api/resumes/${selectedResume.id}/preview`, '_blank')}
                     title="Open PDF Preview Inline"
-                    className="flex-1 h-[44px] font-semibold text-xs"
+                    className="flex-1 h-[44px] font-bold text-xs"
                   >
                     Preview PDF
                   </Button>
@@ -682,94 +673,118 @@ export function ResumesPage() {
       </div>
 
       {/* Edit Metadata Modal */}
-      <Modal
-        isOpen={isEditOpen}
-        onClose={() => setIsEditOpen(false)}
-        title="Edit Candidate Metadata"
-        subtitle="Update candidate name, target company, role, or reassign to another client account."
-      >
-        <form onSubmit={handleSaveEdit} className="space-y-4">
-          <Input
-            label="Candidate Name"
-            required
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-          />
+      {isEditOpen && (
+        <Modal
+          isOpen={isEditOpen}
+          onClose={() => setIsEditOpen(false)}
+          title="Edit Candidate Metadata"
+        >
+          <form onSubmit={handleSaveEdit} className="space-y-4">
+            <div>
+              <label className="text-small font-semibold text-[#081226] block mb-1">
+                Candidate Name
+              </label>
+              <Input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                required
+                placeholder="Candidate Full Name"
+              />
+            </div>
 
-          <Input
-            label="Target Hiring Company"
-            required
-            value={editCompany}
-            onChange={(e) => setEditCompany(e.target.value)}
-          />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-small font-semibold text-[#081226] block mb-1">
+                  Target Company
+                </label>
+                <Input
+                  value={editCompany}
+                  onChange={(e) => setEditCompany(e.target.value)}
+                  placeholder="e.g. TCS, Infosys"
+                />
+              </div>
 
-          <Input
-            label="Job Role Position"
-            required
-            value={editRole}
-            onChange={(e) => setEditRole(e.target.value)}
-          />
+              <div>
+                <label className="text-small font-semibold text-[#081226] block mb-1">
+                  Target Role
+                </label>
+                <Input
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  placeholder="e.g. Java Developer"
+                />
+              </div>
+            </div>
 
-          <div>
-            <label className="block text-caption font-bold text-[#081226] mb-1.5">
-              Service Client Account
-            </label>
-            <select
-              value={editClientId}
-              onChange={(e) => setEditClientId(e.target.value)}
-              className="w-full h-11 px-3 rounded-xl border border-[#CBD5E1] text-small"
-              required
-            >
-              <option value="">-- Choose Client --</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.company_name}
-                </option>
-              ))}
-            </select>
+            <div>
+              <label className="text-small font-semibold text-[#081226] block mb-1">
+                Assigned Service Client
+              </label>
+              <select
+                value={editClientId}
+                onChange={(e) => setEditClientId(e.target.value)}
+                className="w-full h-[44px] px-3 rounded-xl text-small font-medium bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0]"
+                required
+              >
+                <option value="">Select Service Client...</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.company_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-[#E2E8F0]">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => setIsEditOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                type="submit"
+                isLoading={savingEdit}
+              >
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Delete Resume Confirmation Modal */}
+      {deleteResumeTarget && (
+        <Modal
+          isOpen={!!deleteResumeTarget}
+          onClose={() => setDeleteResumeTarget(null)}
+          title="Delete Candidate Resume"
+        >
+          <div className="space-y-4">
+            <p className="text-small text-[#64748B]">
+              Are you sure you want to permanently delete{' '}
+              <strong className="text-[#081226]">{deleteResumeTarget.candidate_name}</strong>? This will remove the record from ApplyFlow and purge the file from Google Drive.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteResumeTarget(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                isLoading={deleting}
+                onClick={handleDeleteResume}
+              >
+                Delete Resume
+              </Button>
+            </div>
           </div>
-
-          <div className="pt-4 flex justify-end gap-3">
-            <Button variant="outline" size="md" onClick={() => setIsEditOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" size="md" isLoading={savingEdit}>
-              Save Changes
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {/* Delete Resume Modal */}
-      <Modal
-        isOpen={!!deleteResumeTarget}
-        onClose={() => setDeleteResumeTarget(null)}
-        title="Delete Candidate Resume?"
-        subtitle="Permanent removal from database and cloud storage."
-      >
-        <div className="space-y-4">
-          <p className="text-small text-[#64748B]">
-            Are you sure you want to delete the resume for <strong>{deleteResumeTarget?.candidate_name}</strong>?
-          </p>
-          <div className="p-3.5 rounded-xl bg-[#FEF2F2] border border-[#FCA5A5] text-caption text-[#991B1B]">
-            This action will remove the candidate record from database search, delete associated applications, and remove the PDF from Google Drive.
-          </div>
-
-          <div className="flex justify-end gap-3 pt-2">
-            <Button variant="outline" size="md" onClick={() => setDeleteResumeTarget(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              size="md"
-              onClick={handleDeleteResume}
-              isLoading={deleting}
-            >
-              Confirm Delete
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        </Modal>
+      )}
     </div>
   );
 }

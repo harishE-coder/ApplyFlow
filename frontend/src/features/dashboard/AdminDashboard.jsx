@@ -47,6 +47,7 @@ import { BrandedLoader } from '@/components/ui/BrandedLoader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Table } from '@/components/ui/Table';
 import { Button } from '@/components/ui/Button';
+import { DateFilter } from '@/components/ui/DateFilter';
 import { useToast } from '@/components/ui/Toast';
 import api from '@/services/api';
 import { formatDate, formatRelativeTime, cn } from '@/utils/cn';
@@ -443,41 +444,19 @@ export function AdminDashboard() {
             </select>
           </div>
 
-          {/* Filter 3: Single Date Picker (Historical Date Choice) */}
-          <div className="lg:col-span-3">
+          {/* Filter 3: Global Unified Date Filter */}
+          <div className="lg:col-span-6">
             <label className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block mb-1">
-              3. Target Date (Historical)
+              3. Date Filter (Global Telemetry)
             </label>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => handleDateInput(e.target.value)}
-              className="w-full h-[44px] px-3.5 rounded-xl text-small font-medium bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0] shadow-xs hover:border-[#CBD5E1] focus:outline-none focus:border-[#0D6EFD]"
+            <DateFilter
+              selectedPreset={quickDateFilter}
+              customDate={selectedDate}
+              onFilterChange={({ preset, customDate: cDate }) => {
+                setQuickDateFilter(preset);
+                if (cDate) setSelectedDate(cDate);
+              }}
             />
-          </div>
-
-          {/* Filter 4: Quick Date Buttons */}
-          <div className="lg:col-span-3">
-            <label className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block mb-1">
-              4. Quick Period
-            </label>
-            <div className="flex items-center gap-1 bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0]">
-              {['today', 'yesterday', 'this_week', 'this_month'].map((pk) => (
-                <button
-                  key={pk}
-                  type="button"
-                  onClick={() => handleQuickDateSelect(pk)}
-                  className={cn(
-                    'flex-1 py-1 text-[11px] font-bold rounded-lg transition-all capitalize cursor-pointer',
-                    quickDateFilter === pk
-                      ? 'bg-white text-[#081226] shadow-xs'
-                      : 'text-[#64748B] hover:text-[#081226]'
-                  )}
-                >
-                  {pk.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </div>

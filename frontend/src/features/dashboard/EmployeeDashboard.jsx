@@ -35,6 +35,7 @@ import { KPICard } from '@/components/ui/KPICard';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
 import { UploadDropzone } from '@/components/ui/UploadDropzone';
+import { DateFilter } from '@/components/ui/DateFilter';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
@@ -50,12 +51,12 @@ export function EmployeeDashboard() {
   const [assignedClients, setAssignedClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [dateRange, setDateRange] = useState('today');
+  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Attendance & Live Timer State
   const [attendance, setAttendance] = useState(null);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-
 
   // Fetch assigned clients
   useEffect(() => {
@@ -70,7 +71,12 @@ export function EmployeeDashboard() {
     try {
       const params = {};
       if (selectedClientId) params.client_id = selectedClientId;
-      if (dateRange) params.date_range = dateRange;
+      if (dateRange === 'custom') {
+        params.custom_date = customDate;
+        params.date_range = customDate;
+      } else if (dateRange) {
+        params.date_range = dateRange;
+      }
 
       const [dashRes, attRes] = await Promise.all([
         api.get('/dashboard/employee', { params }),
@@ -88,7 +94,7 @@ export function EmployeeDashboard() {
 
   useEffect(() => {
     fetchData();
-  }, [selectedClientId, dateRange]);
+  }, [selectedClientId, dateRange, customDate]);
 
   // Real-time listener for resume uploads, applications, and emails to update dashboard instantly
   useEffect(() => {
@@ -274,28 +280,19 @@ export function EmployeeDashboard() {
             </select>
           </div>
 
-          {/* Date Pills */}
+          {/* Global Date Filter */}
           <div className="sm:col-span-6">
             <label className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block mb-1">
-              Date Filter
+              Global Date Filter
             </label>
-            <div className="flex items-center gap-1 bg-[#F1F5F9] p-1 rounded-xl border border-[#E2E8F0]">
-              {datePills.map((pill) => (
-                <button
-                  key={pill.id}
-                  type="button"
-                  onClick={() => setDateRange(pill.id)}
-                  className={cn(
-                    'flex-1 py-1.5 text-[12px] font-bold rounded-lg transition-all text-center cursor-pointer',
-                    dateRange === pill.id
-                      ? 'bg-white text-[#081226] shadow-xs'
-                      : 'text-[#64748B] hover:text-[#081226]'
-                  )}
-                >
-                  {pill.label}
-                </button>
-              ))}
-            </div>
+            <DateFilter
+              selectedPreset={dateRange}
+              customDate={customDate}
+              onFilterChange={({ preset, customDate: cDate }) => {
+                setDateRange(preset);
+                if (cDate) setCustomDate(cDate);
+              }}
+            />
           </div>
         </div>
       </div>

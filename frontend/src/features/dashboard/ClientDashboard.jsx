@@ -33,6 +33,7 @@ import { KPICard } from '@/components/ui/KPICard';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
+import { DateFilter } from '@/components/ui/DateFilter';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
@@ -44,15 +45,24 @@ export function ClientDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Hiring Company Filter State
+  // Filters State
   const [selectedHiringCompany, setSelectedHiringCompany] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [dateRange, setDateRange] = useState('today');
+  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
   const [expandedCards, setExpandedCards] = useState({});
 
   const fetchClientDashboard = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/dashboard/client');
+      const params = {};
+      if (dateRange === 'custom') {
+        params.custom_date = customDate;
+        params.date_range = customDate;
+      } else if (dateRange) {
+        params.date_range = dateRange;
+      }
+      const res = await api.get('/dashboard/client', { params });
       setData(res.data);
     } catch (err) {
       toastError('Dashboard Error', 'Failed to load client portal telemetry');
@@ -63,7 +73,7 @@ export function ClientDashboard() {
 
   useEffect(() => {
     fetchClientDashboard();
-  }, []);
+  }, [dateRange, customDate]);
 
   // Real-time listener for resume uploads to update client portal metrics instantly
   useEffect(() => {
@@ -72,7 +82,7 @@ export function ClientDashboard() {
     };
     window.addEventListener('resume-uploaded', handleUploadEvent);
     return () => window.removeEventListener('resume-uploaded', handleUploadEvent);
-  }, []);
+  }, [dateRange, customDate]);
 
   const toggleCard = (id) => {
     setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -129,33 +139,52 @@ export function ClientDashboard() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto pb-12 select-none">
-      {/* 1. Header (Clean Customer View - No internal Service Client dropdown) */}
-      <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-card flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h1 className="text-h2 font-extrabold text-[#081226] tracking-tight">
-              {clientName} Dashboard
-            </h1>
-            <span className="text-caption font-bold px-2.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE] flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-[#F97316]" />
-              Dedicated Service Portal
-            </span>
+      {/* 1. Header with Global Date Filter */}
+      <div className="bg-white p-6 rounded-3xl border border-[#E2E8F0] shadow-card space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h1 className="text-h2 font-extrabold text-[#081226] tracking-tight">
+                {clientName} Dashboard
+              </h1>
+              <span className="text-caption font-bold px-2.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE] flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-[#F97316]" />
+                Dedicated Service Portal
+              </span>
+            </div>
+            <p className="text-small text-[#64748B] mt-1">
+              Real-time candidate submissions, global date filtering, and interview progress for your organization.
+            </p>
           </div>
-          <p className="text-small text-[#64748B] mt-1">
-            Real-time candidate submissions and interview progress for your organization.
-          </p>
+
+          <Button
+            variant="outline"
+            size="md"
+            icon={RefreshCw}
+            onClick={fetchClientDashboard}
+            isLoading={loading}
+            className="h-[44px] font-bold text-xs"
+          >
+            Refresh Data
+          </Button>
         </div>
 
-        <Button
-          variant="outline"
-          size="md"
-          icon={RefreshCw}
-          onClick={fetchClientDashboard}
-          isLoading={loading}
-          className="h-[44px] font-bold text-xs"
-        >
-          Refresh Data
-        </Button>
+        {/* Global Date Filter Controls */}
+        <div className="flex items-center justify-between gap-4 pt-3 border-t border-[#F1F5F9] flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
+              Date Period:
+            </span>
+            <DateFilter
+              selectedPreset={dateRange}
+              customDate={customDate}
+              onFilterChange={({ preset, customDate: cDate }) => {
+                setDateRange(preset);
+                if (cDate) setCustomDate(cDate);
+              }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* 2. Top 4 Locked KPI Cards (Applied, Today's Uploads, Interview Updates, Offers) */}

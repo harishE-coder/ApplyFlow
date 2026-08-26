@@ -25,12 +25,15 @@ async def get_admin_overview(
     client_id: uuid.UUID | None = Query(None, description="Filter by Service Client ID"),
     employee_id: uuid.UUID | None = Query(None, description="Filter by Employee ID"),
     date_range: str | None = Query(None, description="Filter by date range (today, yesterday, this_week, this_month)"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Admin/Sub-Admin Overview with cascading filtering: Service Client + Employee + Date Range."""
+    """Admin/Sub-Admin Overview with cascading filtering: Service Client + Employee + Global Date Filter."""
+    effective_range = custom_date or date_filter or date_range
     return await service.get_admin_overview(
-        db, current_user=current_user, client_id=client_id, employee_id=employee_id, date_range=date_range
+        db, current_user=current_user, client_id=client_id, employee_id=employee_id, date_range=effective_range, custom_date=custom_date
     )
 
 
@@ -56,6 +59,8 @@ async def get_admin_clients_view(
 async def get_employee_target_summary_endpoint(
     client_id: uuid.UUID | None = Query(None, description="Filter by assigned Service Client ID"),
     date_range: str | None = Query("today", description="Filter by date range (today, yesterday, this_week, this_month)"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -70,7 +75,8 @@ async def get_employee_target_summary_endpoint(
     assigned_cids = (await db.execute(assigned_q)).scalars().all()
 
     target_clients = [client_id] if (client_id and client_id in assigned_cids) else assigned_cids
-    start_dt, end_dt, filter_d = _parse_date_filter(date_range or "today")
+    effective_range = custom_date or date_filter or date_range or "today"
+    start_dt, end_dt, filter_d = _parse_date_filter(effective_range, custom_date)
 
     return await service.get_employee_target_summary(
         db=db,
@@ -86,19 +92,26 @@ async def get_employee_target_summary_endpoint(
 async def get_employee_dashboard(
     client_id: uuid.UUID | None = Query(None, description="Filter by assigned Service Client ID"),
     date_range: str | None = Query(None, description="Filter by date range (today, yesterday, this_week, this_month)"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Employee Dashboard: isolated metrics by assigned Service Client + Date Range."""
+    """Employee Dashboard: isolated metrics by assigned Service Client + Global Date Filter."""
+    effective_range = custom_date or date_filter or date_range
     return await service.get_employee_dashboard(
-        db, current_user, client_id=client_id, date_range=date_range
+        db, current_user, client_id=client_id, date_range=effective_range, custom_date=custom_date
     )
 
 
 @router.get("/client", response_model=ClientDashboardResponse)
 async def get_client_dashboard(
+    date_range: str | None = Query(None, description="Filter by date range"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Client Dashboard: applications received, available resumes, roles breakdown."""
-    return await service.get_client_dashboard(db, current_user)
+    """Client Dashboard: applications received, available resumes, roles breakdown with Global Date Filter."""
+    effective_range = custom_date or date_filter or date_range
+    return await service.get_client_dashboard(db, current_user, date_range=effective_range, custom_date=custom_date)

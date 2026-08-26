@@ -78,16 +78,21 @@ async def search_resumes(
     role: str | None = Query(None, description="Filter by role"),
     candidate_name: str | None = Query(None, description="Filter by candidate name"),
     resume_id_tag: str | None = Query(None, description="Filter by Resume ID / Tag"),
+    resume_date: date | None = Query(None, description="Filter by specific upload date (YYYY-MM-DD)"),
+    date_filter: str | None = Query(None, description="Date filter preset (today, yesterday, this_week, this_month, custom)"),
+    custom_date: date | None = Query(None, description="Custom date (YYYY-MM-DD)"),
+    start_date: date | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: date | None = Query(None, description="End date (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Search resumes with strict permission scoping:
-    - Admin: searches all resumes, filterable by Service Client and Company
-    - Employee: searches only assigned Service Clients, filterable by Company
-    - Client: searches only own Service Client account resumes, filterable by Company
+    Search resumes with strict permission scoping & global date filtering:
+    - Admin: searches all resumes, filterable by Service Client, Company, and Resume Date
+    - Employee: searches only assigned Service Clients, filterable by Company and Resume Date
+    - Client: searches only own Service Client account resumes, filterable by Company and Resume Date
     """
     offset = (page - 1) * page_size
     items, total = await service.search_resumes(
@@ -100,6 +105,11 @@ async def search_resumes(
         role=role,
         candidate_name=candidate_name,
         resume_id_tag=resume_id_tag,
+        resume_date=resume_date,
+        date_filter=date_filter,
+        custom_date=custom_date,
+        start_date=start_date,
+        end_date=end_date,
         limit=page_size,
         offset=offset,
     )

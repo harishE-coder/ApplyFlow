@@ -45,38 +45,48 @@ def _safe_date(val) -> date | None:
     return None
 
 
-def _generate_date_series(days: int = 7) -> list[str]:
-    today = datetime.utcnow()
-    return [(today - timedelta(days=i)).strftime("%d %b") for i in range(days - 1, -1, -1)]
+def _generate_date_series(days: int = 7, ref_date: date | None = None) -> list[str]:
+    base_date = datetime.combine(ref_date, datetime.min.time()) if ref_date else datetime.utcnow()
+    return [(base_date - timedelta(days=i)).strftime("%d %b") for i in range(days - 1, -1, -1)]
 
 
-def _parse_date_filter(date_range: str | None) -> tuple[datetime, datetime, date | None]:
+def _parse_date_filter(date_range: str | None, custom_date: str | None = None) -> tuple[datetime, datetime, date | None]:
     today_date = date.today()
     today_start = datetime.combine(today_date, datetime.min.time())
     today_end = datetime.combine(today_date, datetime.max.time())
 
-    if not date_range or date_range == "today":
+    # Direct custom_date param (YYYY-MM-DD)
+    if custom_date and custom_date.strip():
+        try:
+            parsed_d = datetime.strptime(custom_date.strip(), "%Y-%m-%d").date()
+            c_start = datetime.combine(parsed_d, datetime.min.time())
+            c_end = datetime.combine(parsed_d, datetime.max.time())
+            return c_start, c_end, parsed_d
+        except Exception:
+            pass
+
+    if not date_range or date_range.lower() == "today":
         return today_start, today_end, today_date
 
-    if date_range == "yesterday":
+    if date_range.lower() == "yesterday":
         y_date = today_date - timedelta(days=1)
         y_start = datetime.combine(y_date, datetime.min.time())
         y_end = datetime.combine(y_date, datetime.max.time())
         return y_start, y_end, y_date
 
-    if date_range == "this_week":
+    if date_range.lower() in ("this_week", "this week"):
         w_date = today_date - timedelta(days=today_date.weekday())
         w_start = datetime.combine(w_date, datetime.min.time())
         return w_start, today_end, None
 
-    if date_range == "this_month":
+    if date_range.lower() in ("this_month", "this month"):
         m_date = today_date.replace(day=1)
         m_start = datetime.combine(m_date, datetime.min.time())
         return m_start, today_end, None
 
-    # Check if custom YYYY-MM-DD
+    # Check if date_range string itself is a custom YYYY-MM-DD
     try:
-        parsed_d = datetime.strptime(date_range, "%Y-%m-%d").date()
+        parsed_d = datetime.strptime(date_range.strip(), "%Y-%m-%d").date()
         c_start = datetime.combine(parsed_d, datetime.min.time())
         c_end = datetime.combine(parsed_d, datetime.max.time())
         return c_start, c_end, parsed_d
@@ -90,11 +100,13 @@ async def get_admin_overview(
     client_id: uuid.UUID | None = None,
     employee_id: uuid.UUID | None = None,
     date_range: str | None = None,
+    custom_date: str | None = None,
 ) -> AdminOverviewMetrics:
     """
     Admin & Sub-Admin Overview with cascading filtering:
     - Calculates live today_uploads, total_resumes (Applied), today_applications, total_applications.
     - Strictly scoped to assigned clients and employees for Sub-Admins.
+    - Respects custom_date and date_range presets.
     """
     from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
 
@@ -164,7 +176,7 @@ async def get_admin_overview(
     total_apps = (await db.execute(app_q)).scalar() or 0
 
     # Today's uploads & today's applications (calculated from actual date/time)
-    start_dt, end_dt, filter_d = _parse_date_filter(date_range)
+    start_dt, end_dt, filter_d = _parse_date_filter(date_range, custom_date)
 
     today_res_q = select(func.count(Resume.id))
     if target_client_ids is not None:
@@ -229,7 +241,7 @@ async def get_admin_overview(
     assigned_employees = [{"id": str(u.id), "name": u.name, "email": u.email} for u in emp_users]
 
     # Job Openings Task Board telemetry
-    current_date = date.today()
+    current_date = filter_d or date.today()
     job_q = select(Requirement)
     if target_client_ids is not None:
         job_q = job_q.where(Requirement.client_id.in_(target_client_ids))
@@ -246,7 +258,7 @@ async def get_admin_overview(
         job_completion_trend.append({"date": d.strftime("%Y-%m-%d"), "day": d.strftime("%a"), "count": cnt})
 
     # Trends
-    date_labels = _generate_date_series(7)
+    date_labels = _generate_date_series(7, ref_date=filter_d)
     trend = [
         ChartPoint(
             date=d,
@@ -418,14 +430,16 @@ async def get_employee_dashboard(
     user: User,
     client_id: uuid.UUID | None = None,
     date_range: str = "today",
+    custom_date: str | None = None,
 ) -> EmployeeDashboardResponse:
     """
     Employee / Recruiter Dashboard:
-    - Today's Uploads: COUNT(resumes WHERE uploaded_by=user.id AND (resume_date=date.today() OR upload_date >= today_start))
+    - Today's / Filtered Uploads: COUNT(resumes WHERE uploaded_by=user.id AND resume_date matches filter)
     - Total Uploads (Applied): COUNT(resumes WHERE uploaded_by=user.id)
-    - Applications Sent Today: COUNT(applications WHERE employee_id=user.id AND applied_date >= today_start)
+    - Applications Sent Today: COUNT(applications WHERE employee_id=user.id AND applied_date matches filter)
     - Total Applications Sent: COUNT(applications WHERE employee_id=user.id)
     - Target Summary: Single source of truth calculation for Target, Submissions, Remaining, Completion %.
+    - Weekly Trends & KPIs dynamically mapped to custom date window.
     """
     assigned_q = (
         select(Client)
@@ -441,9 +455,9 @@ async def get_employee_dashboard(
         target_clients = [client_id] if client_id in target_clients else []
 
     # Date filter calculation
-    start_dt, end_dt, filter_d = _parse_date_filter(date_range)
+    start_dt, end_dt, filter_d = _parse_date_filter(date_range, custom_date)
 
-    # 1. Today's / Filtered Uploads for current employee
+    # 1. Filtered Uploads for current employee
     upload_q = select(func.count(Resume.id)).where(
         Resume.uploaded_by == user.id,
         Resume.client_id.in_(target_clients),
@@ -488,11 +502,9 @@ async def get_employee_dashboard(
     )
     total_apps = (await db.execute(all_app_q)).scalar() or 0
 
+    # Assigned Client breakdown cards
     assigned_client_cards = []
     for c in assigned_clients:
-        if client_id and c.id != client_id:
-            continue
-
         c_reqs = (
             await db.execute(
                 select(func.count(Requirement.id)).where(
@@ -500,21 +512,36 @@ async def get_employee_dashboard(
                 )
             )
         ).scalar() or 0
-        c_apps = (
+
+        c_apps_today = (
             await db.execute(
-                select(func.count(Application.id))
-                .where(
-                    Application.employee_id == user.id,
+                select(func.count(Application.id)).where(
                     Application.client_id == c.id,
+                    Application.employee_id == user.id,
+                    or_(
+                        func.date(Application.applied_date) == filter_d,
+                        (Application.applied_date >= start_dt) & (Application.applied_date <= end_dt),
+                    ) if filter_d else ((Application.applied_date >= start_dt) & (Application.applied_date <= end_dt)),
                 )
             )
         ).scalar() or 0
+
+        c_target = (
+            await db.execute(
+                select(func.sum(Target.daily_target)).where(
+                    Target.client_id == c.id,
+                    Target.employee_id == user.id,
+                    Target.status == "active",
+                )
+            )
+        ).scalar() or 10
+
         assigned_client_cards.append(
             EmployeeClientCard(
                 id=c.id,
                 company_name=c.company_name,
                 active_requirements_count=c_reqs,
-                applications_count=c_apps,
+                applications_count=c_apps_today,
                 growth="+12%",
             )
         )
@@ -543,7 +570,7 @@ async def get_employee_dashboard(
             )
         )
 
-    date_labels = _generate_date_series(7)
+    date_labels = _generate_date_series(7, ref_date=filter_d)
     trend = [
         ChartPoint(
             date=d,
@@ -559,61 +586,41 @@ async def get_employee_dashboard(
             select(ActivityLog, User.name)
             .join(User, ActivityLog.user_id == User.id)
             .where(ActivityLog.user_id == user.id)
-            .order_by(ActivityLog.created_at.desc())
-            .limit(6)
+            .order_by(desc(ActivityLog.created_at))
+            .limit(10)
         )
     ).all()
 
-    activity_items = []
-    for log, uname in recent_logs:
-        activity_items.append(
-            ActivityItem(
-                id=log.id,
-                action=log.action,
-                user_name=uname,
-                details=log.details or {},
-                created_at=log.created_at.strftime("%d %b %H:%M"),
-            )
+    activity_items = [
+        ActivityItem(
+            id=log.id,
+            action=log.action,
+            user_name=uname or user.name,
+            details=log.details or {},
+            created_at=log.created_at.strftime("%d %b %H:%M") if log.created_at else "Recent",
         )
+        for log, uname in recent_logs
+    ]
 
-    # Job Openings Task Board telemetry for Employee
-    job_emp_q = (
-        select(Requirement)
-        .options(selectinload(Requirement.completer))
-        .where(Requirement.client_id.in_(target_clients))
-    )
-    all_emp_jobs = (await db.execute(job_emp_q)).scalars().all()
+    current_date = filter_d or date.today()
+    job_q = select(Requirement).where(Requirement.client_id.in_(target_clients))
+    all_emp_jobs = (await db.execute(job_q)).scalars().all()
     emp_active_jobs = sum(1 for j in all_emp_jobs if j.status == "active")
-    emp_completed_today_jobs = sum(1 for j in all_emp_jobs if j.status == "done" and _safe_date(j.completed_at) == date.today())
+    emp_completed_today_jobs = sum(1 for j in all_emp_jobs if j.status == "done" and _safe_date(j.completed_at) == current_date)
     emp_high_priority_jobs = sum(1 for j in all_emp_jobs if j.status == "active" and (j.priority or "").lower() == "high")
 
-    def _get_sort_key(j):
-        dt = j.completed_at
-        if isinstance(dt, datetime):
-            return dt
-        if isinstance(dt, str):
-            try:
-                return datetime.fromisoformat(dt.replace("Z", "+00:00"))
-            except Exception:
-                return datetime.min
-        return datetime.min
-
-    recent_done = [j for j in all_emp_jobs if j.status == "done"]
-    recent_done.sort(key=_get_sort_key, reverse=True)
+    recent_completed_jobs = [
+        j for j in all_emp_jobs if j.status == "done" and _safe_date(j.completed_at) == current_date
+    ][:5]
     recent_completed_cards = [
         {
             "id": str(j.id),
             "company": j.company,
-            "job_title": j.job_title or j.role,
-            "completed_at": (
-                j.completed_at.strftime("%d %b %Y")
-                if isinstance(j.completed_at, datetime)
-                else str(j.completed_at or "")[:10]
-            ),
-            "completer_name": j.completer.name if j.completer else "Team Member",
-            "priority": j.priority or "Medium",
+            "job_title": j.job_title,
+            "job_url": j.job_url,
+            "completed_at": j.completed_at.isoformat() if j.completed_at else None,
         }
-        for j in recent_done[:5]
+        for j in recent_completed_jobs
     ]
 
     return EmployeeDashboardResponse(
@@ -637,14 +644,18 @@ async def get_employee_dashboard(
     )
 
 
-async def get_client_dashboard(db: AsyncSession, user: User) -> ClientDashboardResponse:
+async def get_client_dashboard(
+    db: AsyncSession,
+    user: User,
+    date_range: str | None = None,
+    custom_date: str | None = None,
+) -> ClientDashboardResponse:
     """
-    Client Dashboard for Customer Portal (e.g. ABC Staffing).
-    Locked Business Logic:
-    - Applied = COUNT(resumes WHERE client_id = client_id) (all-time total uploaded resumes).
-    - Today's Uploads = COUNT(resumes WHERE client_id = client_id AND (resume_date = date.today() OR upload_date >= today_start)).
-    - Interview Updates = COUNT(applications WHERE client_id = client_id AND status IN ('Round 1', 'Round 2', 'Technical', 'Manager', 'HR', 'Shortlisted')).
-    - Offers = COUNT(applications WHERE client_id = client_id AND status = 'Offer').
+    Client Dashboard for Customer Portal (e.g. ABC Staffing) with Global Date Filtering:
+    - Applied = COUNT(resumes WHERE client_id = client_id).
+    - Today's / Filtered Uploads = COUNT(resumes WHERE client_id = client_id AND (resume_date = filter_d OR upload_date in range)).
+    - Interview Updates = COUNT(applications in interview stages).
+    - Offers = COUNT(applications with Offer status).
     - Application Progress: Applied, Interview, Offer, Joined.
     """
     client = None
@@ -656,29 +667,34 @@ async def get_client_dashboard(db: AsyncSession, user: User) -> ClientDashboardR
     client_name = client.company_name if client else "Customer Portal"
     client_id = client.id if client else uuid.uuid4()
 
-    # 1. Applied Count = Total resumes uploaded for this Service Client across all time
+    start_dt, end_dt, filter_d = _parse_date_filter(date_range, custom_date)
+
+    # 1. Applied Count = Total resumes uploaded for this Service Client
     applied_count = (
         await db.execute(
             select(func.count(Resume.id)).where(Resume.client_id == client_id)
         )
     ).scalar() or 0
 
-    # 2. Today's Uploads = Resumes uploaded today for this Service Client
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_date = date.today()
-    today_uploads = (
-        await db.execute(
-            select(func.count(Resume.id)).where(
-                Resume.client_id == client_id,
-                or_(
-                    Resume.resume_date == today_date,
-                    Resume.upload_date >= today_start,
-                ),
-            )
+    # 2. Filtered Uploads = Resumes uploaded for this Service Client on selected date
+    if filter_d:
+        today_uploads_q = select(func.count(Resume.id)).where(
+            Resume.client_id == client_id,
+            or_(
+                Resume.resume_date == filter_d,
+                (Resume.upload_date >= start_dt) & (Resume.upload_date <= end_dt),
+            ),
         )
-    ).scalar() or 0
+    else:
+        today_uploads_q = select(func.count(Resume.id)).where(
+            Resume.client_id == client_id,
+            Resume.upload_date >= start_dt,
+            Resume.upload_date <= end_dt,
+        )
 
-    # 3. Interview Updates = Applications with interview statuses from AI email intake
+    today_uploads = (await db.execute(today_uploads_q)).scalar() or 0
+
+    # 3. Interview Updates = Applications with interview statuses
     interview_count = (
         await db.execute(
             select(func.count(Application.id)).where(
@@ -705,7 +721,7 @@ async def get_client_dashboard(db: AsyncSession, user: User) -> ClientDashboardR
         )
     ).scalar() or 0
 
-    # Application Progress Stages (Applied comes strictly from resumes table)
+    # Application Progress Stages
     progress_stages = [
         ApplicationProgressStage(stage="Applied", count=applied_count),
         ApplicationProgressStage(stage="Interview", count=interview_count),

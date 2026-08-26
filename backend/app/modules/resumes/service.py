@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select, or_, and_, func, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import UploadFile, HTTPException
@@ -104,10 +104,15 @@ async def search_resumes(
     role: str | None = None,
     candidate_name: str | None = None,
     resume_id_tag: str | None = None,
+    resume_date: date | None = None,
+    date_filter: str | None = None,
+    custom_date: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> tuple[list[ResumeResponse], int]:
-    """Search resumes with strict role/assignment scoping."""
+    """Search resumes with strict role/assignment scoping and global date filtering."""
     allowed_clients = await get_allowed_client_ids(db, current_user)
 
     query = (
@@ -139,6 +144,70 @@ async def search_resumes(
 
     if resume_id_tag:
         query = query.where(Resume.resume_id_tag.ilike(f"%{resume_id_tag.strip()}%"))
+
+    # Global Date Filtering on resume_date
+    target_d = custom_date or resume_date
+    today_val = date.today()
+
+    if date_filter in ("today", "Today"):
+        query = query.where(
+            or_(
+                Resume.resume_date == today_val,
+                func.date(Resume.upload_date) == today_val,
+            )
+        )
+    elif date_filter in ("yesterday", "Yesterday"):
+        y_val = today_val - timedelta(days=1)
+        query = query.where(
+            or_(
+                Resume.resume_date == y_val,
+                func.date(Resume.upload_date) == y_val,
+            )
+        )
+    elif date_filter in ("this_week", "This Week"):
+        w_start = today_val - timedelta(days=today_val.weekday())
+        query = query.where(
+            or_(
+                (Resume.resume_date >= w_start) & (Resume.resume_date <= today_val),
+                (func.date(Resume.upload_date) >= w_start) & (func.date(Resume.upload_date) <= today_val),
+            )
+        )
+    elif date_filter in ("this_month", "This Month"):
+        m_start = date(today_val.year, today_val.month, 1)
+        query = query.where(
+            or_(
+                (Resume.resume_date >= m_start) & (Resume.resume_date <= today_val),
+                (func.date(Resume.upload_date) >= m_start) & (func.date(Resume.upload_date) <= today_val),
+            )
+        )
+    elif target_d:
+        query = query.where(
+            or_(
+                Resume.resume_date == target_d,
+                func.date(Resume.upload_date) == target_d,
+            )
+        )
+    elif start_date and end_date:
+        query = query.where(
+            or_(
+                (Resume.resume_date >= start_date) & (Resume.resume_date <= end_date),
+                (func.date(Resume.upload_date) >= start_date) & (func.date(Resume.upload_date) <= end_date),
+            )
+        )
+    elif start_date:
+        query = query.where(
+            or_(
+                Resume.resume_date >= start_date,
+                func.date(Resume.upload_date) >= start_date,
+            )
+        )
+    elif end_date:
+        query = query.where(
+            or_(
+                Resume.resume_date <= end_date,
+                func.date(Resume.upload_date) <= end_date,
+            )
+        )
 
     if search:
         search_term = f"%{search.strip()}%"
