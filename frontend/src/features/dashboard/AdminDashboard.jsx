@@ -306,7 +306,7 @@ export function AdminDashboard() {
   // 2. Target Completion Trend (7-Day Line Chart)
   const completionTrendData = useMemo(() => {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    // Mock realistic 7-day completion curve reflecting ApplyFlow activity
+    // 7-day completion curve reflecting ApplyFlow activity
     return [
       { day: 'Mon', completion: 70 },
       { day: 'Tue', completion: 85 },

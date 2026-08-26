@@ -228,18 +228,15 @@ Frontend Workspace will be accessible at: `http://localhost:5173`
 
 ---
 
-## 🔑 Default Demo Accounts
+## 🔑 Production Super Admin Account
 
-The database seed script initializes the following pre-configured user accounts:
+Upon initial initialization or running `python seed.py`, the system creates the primary Super Admin account:
 
-| Role | Email | Password | Assigned Scope |
+| Role | Email | Password | Scope |
 | :--- | :--- | :--- | :--- |
-| **Admin** | `admin@applyflow.com` | `admin123` | Global Platform Authority |
-| **Sub-Admin** | `punith@applyflow.com` | `punith123` | Delegated to ABC Staffing & Harish |
-| **Employee (Recruiter)** | `harish@applyflow.com` | `harish123` | Assigned to ABC Staffing & Talent Hub |
-| **Employee 2** | `recruiter2@applyflow.com` | `recruiter123` | Assigned to NextHire |
-| **Client** | `john@abcstaffing.com` | `client123` | ABC Staffing Customer Portal |
-| **Client** | `sarah@talenthub.com` | `client123` | Talent Hub Customer Portal |
+| **Super Admin** | `Harishabblu123@gmail.com` | `Harish@2007` | Full System & Platform Administration |
+
+> **Security Note**: In production deployments, configure `ADMIN_EMAIL` and `ADMIN_PASSWORD` in your environment variables, or update your password via the workspace profile immediately after first login. Additional Sub-Admins, Recruiters, and Client Portal accounts can be created directly through the Admin Portal.
 
 ---
 

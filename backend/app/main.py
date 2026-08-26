@@ -189,6 +189,36 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     print("✅ Database tables and columns verified.")
+
+    # Initialize production Super Admin if missing
+    try:
+        from app.core.database import async_session_factory
+        from app.modules.users.models import User
+        from app.core.security import hash_password
+        from sqlalchemy import select
+
+        async with async_session_factory() as db:
+            admin_user = (
+                await db.execute(
+                    select(User).where(User.email.ilike(settings.admin_email))
+                )
+            ).scalar_one_or_none()
+
+            if not admin_user:
+                admin_user = User(
+                    name=settings.admin_name,
+                    email=settings.admin_email.lower(),
+                    password_hash=hash_password(settings.admin_password),
+                    role="admin",
+                    is_active=True,
+                    status="active",
+                )
+                db.add(admin_user)
+                await db.commit()
+                print(f"👑 Initialized Super Admin account ({settings.admin_email}).")
+    except Exception as e:
+        print(f"⚠️ Note during admin initialization: {e}")
+
     yield
     print("👋 Apply Flow Careers API shutting down...")
 

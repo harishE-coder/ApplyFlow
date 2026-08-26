@@ -19,8 +19,9 @@ async def authenticate_user(
     Validate email and password.
     Returns User if valid, None if invalid.
     """
+    from sqlalchemy import func
     result = await db.execute(
-        select(User).where(User.email == email, User.is_active == True)  # noqa: E712
+        select(User).where(func.lower(User.email) == email.strip().lower(), User.is_active == True)  # noqa: E712
     )
     user = result.scalar_one_or_none()
 

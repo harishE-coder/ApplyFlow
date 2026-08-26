@@ -9,9 +9,6 @@ import {
   CheckCircle2,
   ShieldCheck,
   Zap,
-  Users,
-  Building2,
-  Briefcase,
 } from 'lucide-react';
 import { ApplyFlowLogo } from '@/assets/logo/ApplyFlowLogo';
 import { LoginBrandIllustration } from '@/assets/illustrations/ATSIllustrations';
@@ -30,12 +27,11 @@ export function LoginPage() {
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm({
     defaultValues: {
-      email: 'harish@applyflow.com',
-      password: 'harish123',
+      email: '',
+      password: '',
     },
   });
 
@@ -44,7 +40,7 @@ export function LoginPage() {
     setAuthError('');
     try {
       const user = await login(data.email, data.password);
-      success('Welcome back', `Signed in as ${user.name} (${user.role})`);
+      success('Welcome back', `Signed in as ${user.name}`);
       navigate('/dashboard');
     } catch (err) {
       const msg = err.response?.data?.detail || 'Invalid email or password';
@@ -54,42 +50,6 @@ export function LoginPage() {
       setIsLoading(false);
     }
   };
-
-  const handleQuickFill = (email, password) => {
-    setValue('email', email);
-    setValue('password', password);
-    setAuthError('');
-  };
-
-  const demoAccounts = [
-    {
-      role: 'Recruiter (Employee)',
-      name: 'Harish',
-      email: 'harish@applyflow.com',
-      password: 'harish123',
-      clients: 'ABC Staffing, Talent Hub',
-      badge: 'Primary Recruiter',
-      badgeColor: 'orange',
-    },
-    {
-      role: 'Admin',
-      name: 'Admin User',
-      email: 'admin@applyflow.com',
-      password: 'admin123',
-      clients: 'All Clients & Operations',
-      badge: 'Full Access',
-      badgeColor: 'blue',
-    },
-    {
-      role: 'Client Portal',
-      name: 'John Doe',
-      email: 'john@abcstaffing.com',
-      password: 'client123',
-      clients: 'ABC Staffing Account',
-      badge: 'Client Reviewer',
-      badgeColor: 'gray',
-    },
-  ];
 
   return (
     <div className="min-h-screen w-full flex bg-[#F6F8FB]">
@@ -109,7 +69,7 @@ export function LoginPage() {
           <div className="mb-8">
             <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#2563EB]/20 border border-[#2563EB]/30 text-caption font-semibold text-[#60A5FA] mb-4">
               <Zap className="w-3.5 h-3.5 text-[#F97316]" />
-              Commercial ATS v3.0 Architecture
+              Enterprise Recruitment ATS
             </span>
 
             <h1 className="text-display font-extrabold text-white tracking-tight leading-tight">
@@ -137,19 +97,19 @@ export function LoginPage() {
             </div>
             <div className="flex items-center gap-3 text-small text-[#CBD5E1]">
               <CheckCircle2 className="w-4 h-4 text-[#16A34A] shrink-0" />
-              <span>Permanent split-view candidate review & one-click submit</span>
+              <span>Permanent split-view candidate review & workflow tracking</span>
             </div>
           </div>
         </div>
 
         {/* Footer info */}
         <div className="relative z-10 flex items-center justify-between text-caption text-[#64748B] pt-4 border-t border-[#101F3D]">
-          <span>ApplyFlow Careers ATS</span>
-          <span>Enterprise v3.0</span>
+          <span>ApplyFlow ATS</span>
+          <span>Enterprise Edition</span>
         </div>
       </div>
 
-      {/* RIGHT 60%: High-Precision Login Form */}
+      {/* RIGHT 60%: High-Precision Production Login Form */}
       <div className="flex-1 flex flex-col justify-center items-center p-6 sm:p-12 md:p-16 lg:p-20 overflow-y-auto">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
@@ -167,7 +127,7 @@ export function LoginPage() {
               Sign in to workspace
             </h2>
             <p className="text-small text-[#64748B] mt-1.5">
-              Enter your corporate credentials to access candidate pipelines.
+              Enter your corporate credentials to access your candidate pipelines.
             </p>
           </div>
 
@@ -219,56 +179,12 @@ export function LoginPage() {
                 isLoading={isLoading}
                 icon={ArrowRight}
                 iconPosition="right"
-                className="w-full h-[48px] text-body"
+                className="w-full h-[48px] text-body font-bold"
               >
                 Sign In to ApplyFlow
               </Button>
             </div>
           </form>
-
-          {/* 1-Click Demo Roles Switcher */}
-          <div className="mt-8 pt-6 border-t border-[#F1F5F9]">
-            <p className="text-caption font-bold uppercase tracking-wider text-[#64748B] mb-3 text-center">
-              Quick Switch Demo Roles
-            </p>
-
-            <div className="space-y-2">
-              {demoAccounts.map((account) => (
-                <button
-                  key={account.email}
-                  type="button"
-                  onClick={() => handleQuickFill(account.email, account.password)}
-                  className="w-full p-3 rounded-xl border border-[#E2E8F0] hover:border-[#2563EB] hover:bg-[#EFF6FF]/40 text-left transition-all duration-120 flex items-center justify-between group cursor-pointer"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-small font-bold text-[#081226] group-hover:text-[#2563EB]">
-                        {account.role}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                          account.badgeColor === 'orange'
-                            ? 'bg-[#FFF7ED] text-[#F97316] border border-[#FFEDD5]'
-                            : account.badgeColor === 'blue'
-                            ? 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
-                            : 'bg-[#F1F5F9] text-[#64748B] border border-[#E2E8F0]'
-                        }`}
-                      >
-                        {account.badge}
-                      </span>
-                    </div>
-                    <p className="text-caption text-[#64748B] mt-0.5 truncate">
-                      {account.email} • {account.clients}
-                    </p>
-                  </div>
-
-                  <span className="text-caption font-semibold text-[#2563EB] opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-2">
-                    Use →
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
         </motion.div>
       </div>
     </div>

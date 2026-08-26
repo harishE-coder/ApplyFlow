@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     # Database
@@ -40,6 +41,11 @@ class Settings(BaseSettings):
 
     # CORS
     frontend_url: str = "http://localhost:5173"
+
+    # Initial Admin Seed
+    admin_email: str = "Harishabblu123@gmail.com"
+    admin_password: str = "Harish@2007"
+    admin_name: str = "Harish Admin"
 
     @property
     def database_url(self) -> str:

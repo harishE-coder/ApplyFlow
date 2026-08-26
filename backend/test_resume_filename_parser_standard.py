@@ -101,7 +101,7 @@ async def run_e2e_api_tests():
     client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
 
     # 1. Login as Employee
-    login_res = await client.post("/api/auth/login", json={"email": "harish@applyflow.com", "password": "harish123"})
+    login_res = await client.post("/api/auth/login", json={"email": "qa_recruiter@applyflow.com", "password": "Recruiter@123"})
     assert login_res.status_code == 200, f"Login failed: {login_res.text}"
     user_info = login_res.json()["user"]
 

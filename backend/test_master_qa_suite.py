@@ -8,11 +8,30 @@ Comprehensive End-to-End Functional, Security, Permission, and Stress Test Suite
 import asyncio
 import io
 import json
+import os
+import sys
 import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 import httpx
 import websockets
+
+# Path setup
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from app.core.config import settings
+from app.core.database import async_session_factory
+from app.core.security import hash_password
+from app.modules.users.models import User, SubAdminAssignment  # noqa: F401
+from app.modules.clients.models import Client, EmployeeClient  # noqa: F401
+from app.modules.requirements.models import Requirement  # noqa: F401
+from app.modules.resumes.models import Resume  # noqa: F401
+from app.modules.applications.models import Application, ApplicationEvent  # noqa: F401
+from app.modules.targets.models import Target  # noqa: F401
+from app.modules.activity_logs.models import ActivityLog  # noqa: F401
+from app.modules.attendance.models import Attendance  # noqa: F401
+from app.modules.notifications.models import Notification  # noqa: F401
+from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead  # noqa: F401
+from sqlalchemy import select
 
 BASE_URL = "http://localhost:8000"
 WS_URL = "ws://localhost:8000"
@@ -83,6 +102,73 @@ async def run_master_qa_suite():
     print("🚀 STARTING APPLYFLOW FULL-SPECTRUM QA SUITE")
     print("=" * 80)
 
+    admin_email = (settings.admin_email or "Harishabblu123@gmail.com").lower()
+    admin_pass = settings.admin_password or "Harish@2007"
+    subadmin_email = "qa_subadmin@applyflow.com"
+    subadmin_pass = "SubAdmin@123"
+    emp_email = "qa_recruiter@applyflow.com"
+    emp_pass = "Recruiter@123"
+    client_email = "qa_client@abcstaffing.com"
+    client_pass = "Client@123"
+
+    # Setup database test actors
+    async with async_session_factory() as db:
+        # 1. Admin
+        adm = (await db.execute(select(User).where(User.email.ilike(admin_email)))).scalar_one_or_none()
+        if not adm:
+            adm = User(name=settings.admin_name, email=admin_email, password_hash=hash_password(admin_pass), role="admin", is_active=True, status="active")
+            db.add(adm)
+            await db.flush()
+
+        # 2. Clients
+        abc_c = (await db.execute(select(Client).where(Client.company_name == "ABC Staffing"))).scalar_one_or_none()
+        if not abc_c:
+            abc_c = Client(company_name="ABC Staffing", contact_person="John Doe", email="contact@abcstaffing.com", phone="+1-555-0101", status="active")
+            db.add(abc_c)
+            await db.flush()
+
+        next_c = (await db.execute(select(Client).where(Client.company_name == "NextHire"))).scalar_one_or_none()
+        if not next_c:
+            next_c = Client(company_name="NextHire", contact_person="David Miller", email="contact@nexthire.com", phone="+1-555-0103", status="active")
+            db.add(next_c)
+            await db.flush()
+
+        # 3. Sub-Admin
+        subadm = (await db.execute(select(User).where(User.email == subadmin_email))).scalar_one_or_none()
+        if not subadm:
+            subadm = User(name="QA SubAdmin", email=subadmin_email, password_hash=hash_password(subadmin_pass), role="sub_admin", is_active=True, status="active")
+            db.add(subadm)
+            await db.flush()
+
+        # 4. Recruiter
+        emp = (await db.execute(select(User).where(User.email == emp_email))).scalar_one_or_none()
+        if not emp:
+            emp = User(name="QA Recruiter", email=emp_email, password_hash=hash_password(emp_pass), role="employee", is_active=True, status="active")
+            db.add(emp)
+            await db.flush()
+
+        # 5. Client User
+        cl_usr = (await db.execute(select(User).where(User.email == client_email))).scalar_one_or_none()
+        if not cl_usr:
+            cl_usr = User(name="QA Client User", email=client_email, password_hash=hash_password(client_pass), role="client", client_id=abc_c.id, is_active=True, status="active")
+            db.add(cl_usr)
+            await db.flush()
+
+        # Scoping assignments
+        ec = (await db.execute(select(EmployeeClient).where(EmployeeClient.employee_id == emp.id, EmployeeClient.client_id == abc_c.id))).scalar_one_or_none()
+        if not ec:
+            db.add(EmployeeClient(employee_id=emp.id, client_id=abc_c.id, is_primary=True, active=True))
+
+        sa_c = (await db.execute(select(SubAdminAssignment).where(SubAdminAssignment.sub_admin_id == subadm.id, SubAdminAssignment.client_id == abc_c.id))).scalar_one_or_none()
+        if not sa_c:
+            db.add(SubAdminAssignment(sub_admin_id=subadm.id, client_id=abc_c.id, active=True))
+
+        sa_e = (await db.execute(select(SubAdminAssignment).where(SubAdminAssignment.sub_admin_id == subadm.id, SubAdminAssignment.employee_id == emp.id))).scalar_one_or_none()
+        if not sa_e:
+            db.add(SubAdminAssignment(sub_admin_id=subadm.id, employee_id=emp.id, active=True))
+
+        await db.commit()
+
     # =========================================================================
     # PHASE 1: AUTHENTICATION & SECURITY
     # =========================================================================
@@ -95,32 +181,32 @@ async def run_master_qa_suite():
     customer_client = httpx.AsyncClient(base_url=BASE_URL, timeout=60.0)
     unauth_client = httpx.AsyncClient(base_url=BASE_URL, timeout=60.0)
 
-    admin_res = await admin_client.post("/api/auth/login", json={"email": "admin@applyflow.com", "password": "admin123"})
+    admin_res = await admin_client.post("/api/auth/login", json={"email": admin_email, "password": admin_pass})
     if admin_res.status_code == 200 and admin_res.json()["user"]["role"] == "admin":
-        runner.record_pass("Auth", "Super Admin Login", "Role: admin")
+        runner.record_pass("Auth", "Super Admin Login", f"Role: admin ({admin_email})")
     else:
         runner.record_fail("Auth", "Super Admin Login", "Critical", f"Status: {admin_res.status_code}", admin_res.text)
 
-    subadmin_res = await subadmin_client.post("/api/auth/login", json={"email": "punith@applyflow.com", "password": "punith123"})
+    subadmin_res = await subadmin_client.post("/api/auth/login", json={"email": subadmin_email, "password": subadmin_pass})
     if subadmin_res.status_code == 200 and subadmin_res.json()["user"]["role"] == "sub_admin":
         runner.record_pass("Auth", "Sub-Admin Login", "Role: sub_admin")
     else:
         runner.record_fail("Auth", "Sub-Admin Login", "Critical", f"Status: {subadmin_res.status_code}", subadmin_res.text)
 
-    emp_res = await employee_client.post("/api/auth/login", json={"email": "harish@applyflow.com", "password": "harish123"})
+    emp_res = await employee_client.post("/api/auth/login", json={"email": emp_email, "password": emp_pass})
     if emp_res.status_code == 200 and emp_res.json()["user"]["role"] == "employee":
         runner.record_pass("Auth", "Recruiter (Employee) Login", "Role: employee")
     else:
         runner.record_fail("Auth", "Recruiter (Employee) Login", "Critical", f"Status: {emp_res.status_code}", emp_res.text)
 
-    client_res = await customer_client.post("/api/auth/login", json={"email": "john@abcstaffing.com", "password": "client123"})
+    client_res = await customer_client.post("/api/auth/login", json={"email": client_email, "password": client_pass})
     if client_res.status_code == 200 and client_res.json()["user"]["role"] == "client":
         runner.record_pass("Auth", "Customer Portal (Client) Login", "Role: client")
     else:
         runner.record_fail("Auth", "Customer Portal (Client) Login", "Critical", f"Status: {client_res.status_code}", client_res.text)
 
     # 1.2 Invalid password rejection
-    bad_pass_res = await unauth_client.post("/api/auth/login", json={"email": "admin@applyflow.com", "password": "wrongpassword999"})
+    bad_pass_res = await unauth_client.post("/api/auth/login", json={"email": admin_email, "password": "wrongpassword999"})
     if bad_pass_res.status_code == 401:
         runner.record_pass("Auth", "Invalid Password Rejection (401)")
     else:
@@ -145,7 +231,7 @@ async def run_master_qa_suite():
     if me_res.status_code == 200:
         me_data = me_res.json()
         me_email = me_data.get("email") or me_data.get("user", {}).get("email")
-        if me_email == "admin@applyflow.com":
+        if me_email == admin_email:
             runner.record_pass("Auth", "Session Profile Validation (/api/auth/me)")
         else:
             runner.record_fail("Auth", "Session Profile Validation", "High", f"Unexpected email: {me_email}")
@@ -161,7 +247,7 @@ async def run_master_qa_suite():
 
     # 1.7 Logout flow
     temp_client = httpx.AsyncClient(base_url=BASE_URL)
-    await temp_client.post("/api/auth/login", json={"email": "harish@applyflow.com", "password": "harish123"})
+    await temp_client.post("/api/auth/login", json={"email": emp_email, "password": emp_pass})
     logout_res = await temp_client.post("/api/auth/logout")
     if logout_res.status_code == 200:
         post_logout_me = await temp_client.get("/api/auth/me")

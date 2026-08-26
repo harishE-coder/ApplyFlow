@@ -3,6 +3,7 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 import uuid
+import pytest
 
 # Ensure backend path is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +30,7 @@ from app.modules.dashboard.service import (
 from app.core.database import async_session_factory as AsyncSessionLocal
 
 
+@pytest.mark.anyio
 async def test_global_date_filters_and_pipeline():
     print("\n=======================================================")
     print("🚀 RUNNING TEST: Global Custom Date Filters & Auto-Pipeline")
@@ -36,20 +38,32 @@ async def test_global_date_filters_and_pipeline():
 
     async with AsyncSessionLocal() as db:
         # Setup Test Users and Client
-        admin_res = await db.execute(select(User).where(User.role == "admin"))
-        admin = admin_res.scalars().first()
+        admin = (await db.execute(select(User).where(User.role == "admin"))).scalars().first()
+        if not admin:
+            from app.core.security import hash_password
+            admin = User(name=settings.admin_name, email=settings.admin_email.lower(), password_hash=hash_password(settings.admin_password), role="admin", is_active=True, status="active")
+            db.add(admin)
+            await db.flush()
 
-        emp_res = await db.execute(select(User).where(User.role == "employee"))
-        employee = emp_res.scalars().first()
+        client = (await db.execute(select(Client))).scalars().first()
+        if not client:
+            client = Client(company_name="ABC Staffing", contact_person="John Doe", email="contact@abcstaffing.com", phone="+1-555-0101", status="active")
+            db.add(client)
+            await db.flush()
 
-        client_res = await db.execute(select(Client))
-        client = client_res.scalars().first()
+        employee = (await db.execute(select(User).where(User.role == "employee"))).scalars().first()
+        if not employee:
+            from app.core.security import hash_password
+            employee = User(name="QA Recruiter", email="qa_recruiter@applyflow.com", password_hash=hash_password("Recruiter@123"), role="employee", is_active=True, status="active")
+            db.add(employee)
+            await db.flush()
 
-        if not admin or not employee or not client:
-            print("⚠️ Skipping test: Admin, Employee, or Client missing in DB.")
-            return
+        ec = (await db.execute(select(EmployeeClient).where(EmployeeClient.employee_id == employee.id, EmployeeClient.client_id == client.id))).scalar_one_or_none()
+        if not ec:
+            db.add(EmployeeClient(employee_id=employee.id, client_id=client.id, is_primary=True, active=True))
+        await db.commit()
 
-        print(f"✓ Context: Admin={admin.name}, Employee={employee.name}, Client={client.company_name}")
+        print(f"✓ Context: Admin={admin.name} ({admin.email}), Employee={employee.name}, Client={client.company_name}")
 
         test_past_date = date(2026, 8, 20)
         today_date = date.today()
