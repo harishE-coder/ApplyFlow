@@ -24,6 +24,7 @@ import {
   Power,
   Archive,
   Lock,
+  AlertCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Avatar } from '@/components/ui/Avatar';
