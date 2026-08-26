@@ -18,6 +18,8 @@ import {
   Mail,
   User as UserIcon,
   Filter,
+  Trash2,
+  AlertCircle,
 } from 'lucide-react';
 import api from '@/services/api';
 import { Avatar } from '@/components/ui/Avatar';
