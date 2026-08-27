@@ -453,16 +453,21 @@ async def get_employee_target_summary(
     """
     tgt_q = select(func.coalesce(func.sum(Target.daily_target), 0)).where(
         Target.employee_id == employee_id,
-        Target.client_id.in_(client_ids),
         Target.status == "active",
     )
+    if client_ids:
+        tgt_q = tgt_q.where(Target.client_id.in_(client_ids))
     raw_tgt = (await db.execute(tgt_q)).scalar() or 0
+    if raw_tgt == 0:
+        raw_tgt = 25
     tgt_val = raw_tgt if filter_d else (raw_tgt * num_days)
 
     res_q = select(func.count(Resume.id)).where(
         Resume.uploaded_by == employee_id,
-        Resume.client_id.in_(client_ids),
     )
+    if client_ids:
+        res_q = res_q.where(Resume.client_id.in_(client_ids))
+
     if filter_d:
         res_q = res_q.where(
             or_(
@@ -517,6 +522,11 @@ async def get_employee_dashboard(
     assigned_res = await db.execute(assigned_q)
     assigned_clients = assigned_res.scalars().all()
 
+    # If recruiter has no restricted assignments, allow seeing active clients
+    if not assigned_clients:
+        all_c_res = await db.execute(select(Client).where(Client.is_active == True).order_by(Client.company_name))
+        assigned_clients = all_c_res.scalars().all()
+
     target_clients = [c.id for c in assigned_clients]
     if client_id:
         target_clients = [client_id] if client_id in target_clients else []
@@ -528,8 +538,10 @@ async def get_employee_dashboard(
     # 1. Filtered Uploads for current employee
     upload_q = select(func.count(Resume.id)).where(
         Resume.uploaded_by == user.id,
-        Resume.client_id.in_(target_clients),
     )
+    if client_id and target_clients:
+        upload_q = upload_q.where(Resume.client_id.in_(target_clients))
+
     if filter_d:
         upload_q = upload_q.where(
             or_(
@@ -552,8 +564,9 @@ async def get_employee_dashboard(
     # 2. Total All-time Uploads for current employee
     total_upload_q = select(func.count(Resume.id)).where(
         Resume.uploaded_by == user.id,
-        Resume.client_id.in_(target_clients),
     )
+    if client_id and target_clients:
+        total_upload_q = total_upload_q.where(Resume.client_id.in_(target_clients))
     total_uploads = (await db.execute(total_upload_q)).scalar() or 0
 
     # 3. Target Summary - Single Source of Truth
@@ -1024,6 +1037,9 @@ async def get_employee_dashboard_home(
     notif_res = await db.execute(notif_q)
 
     assigned_clients = [{"id": str(r.id), "company_name": r.company_name} for r in assigned_res.all()]
+    if not assigned_clients:
+        all_c_res = await db.execute(select(Client.id, Client.company_name).where(Client.is_active == True).order_by(Client.company_name))  # noqa: E712
+        assigned_clients = [{"id": str(r.id), "company_name": r.company_name} for r in all_c_res.all()]
     notifications = [
         {
             "id": str(r.id),
