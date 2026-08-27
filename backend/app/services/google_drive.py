@@ -23,6 +23,61 @@ class DriveService:
         self.script_url = settings.google_apps_script_url
         self.root_folder_id = settings.google_drive_root_folder_id
 
+    def save_local_file(self, file_bytes: bytes, filename: str, client_name: str) -> tuple[str, str]:
+        """Synchronously write file to ./uploads/ in sub-millisecond time."""
+        file_id = f"file_{uuid.uuid4().hex}"
+        client_dir = UPLOAD_DIR / client_name.replace(" ", "_")
+        client_dir.mkdir(parents=True, exist_ok=True)
+        local_filename = f"{file_id}_{filename}"
+        local_path = client_dir / local_filename
+
+        with open(local_path, "wb") as f:
+            f.write(file_bytes)
+
+        return file_id, str(local_path)
+
+    async def sync_to_google_drive_background(
+        self,
+        resume_id: uuid.UUID,
+        file_bytes: bytes,
+        filename: str,
+        client_name: str,
+    ):
+        """Background worker: upload file to Google Apps Script and update resume record."""
+        if not self.script_url:
+            return
+        try:
+            b64_content = base64.b64encode(file_bytes).decode("utf-8")
+            payload = {
+                "client": client_name,
+                "filename": filename,
+                "content": b64_content,
+                "rootFolderId": self.root_folder_id,
+            }
+
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.script_url}?action=upload",
+                    data=payload,
+                )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success") and data.get("fileId"):
+                    drive_file_id = data.get("fileId")
+                    from app.core.database import async_session_factory
+                    from app.modules.resumes.models import Resume
+                    from sqlalchemy import select
+                    async with async_session_factory() as session:
+                        res = await session.execute(select(Resume).where(Resume.id == resume_id))
+                        r = res.scalar_one_or_none()
+                        if r:
+                            r.drive_file_id = drive_file_id
+                            await session.commit()
+                    print(f"✅ Background Drive sync complete for resume {resume_id} -> {drive_file_id}")
+        except Exception as e:
+            print(f"⚠️ Background Drive sync notice ({type(e).__name__}): {e}")
+
     async def upload_file(
         self,
         file_bytes: bytes,
@@ -41,16 +96,7 @@ class DriveService:
         Expected response:
             {"success": true, "fileId": "...", "fileName": "...", "url": "..."}
         """
-        file_id = f"file_{uuid.uuid4().hex}"
-
-        # 1. Always ensure local storage copy exists for instant fast retrieval
-        client_dir = UPLOAD_DIR / client_name.replace(" ", "_")
-        client_dir.mkdir(parents=True, exist_ok=True)
-        local_filename = f"{file_id}_{filename}"
-        local_path = client_dir / local_filename
-
-        with open(local_path, "wb") as f:
-            f.write(file_bytes)
+        file_id, local_path = self.save_local_file(file_bytes, filename, client_name)
 
         # 2. Attempt Google Apps Script upload with fast timeout
         if self.script_url:

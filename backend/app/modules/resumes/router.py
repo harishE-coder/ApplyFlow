@@ -1,7 +1,7 @@
 import io
 import uuid
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks
 from fastapi.responses import Response as FastAPIResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,9 +122,9 @@ async def search_resumes(
         "total_pages": (total + page_size - 1) // page_size if total > 0 else 1,
     }
 
-
 @router.post("/upload", response_model=BulkUploadResponse)
 async def upload_resumes_bulk(
+    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     client_id: uuid.UUID = Form(...),
     resume_date: date | None = Form(None),
@@ -148,12 +148,14 @@ async def upload_resumes_bulk(
         client_id=client_id,
         resume_date=resume_date,
         requirement_id=requirement_id,
+        background_tasks=background_tasks,
     )
 
 
 @router.post("/confirm-manual", response_model=list[ResumeResponse])
 async def confirm_manual(
     payload: ConfirmManualUploadRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -162,6 +164,7 @@ async def confirm_manual(
         db=db,
         current_user=current_user,
         items=payload.items,
+        background_tasks=background_tasks,
     )
 
 

@@ -199,16 +199,32 @@ async def get_employee_target_progress(
     t_result = await db.execute(t_query)
     targets = t_result.all()
 
+    if not targets:
+        return EmployeeTargetProgressResponse(
+            total_target=0,
+            total_achieved=0,
+            overall_percentage=0.0,
+            client_breakdown=[],
+        )
+
+    target_client_ids = [t.client_id for t, _ in targets]
+    achieved_map = dict(
+        (await db.execute(
+            select(Application.client_id, func.count(Application.id))
+            .where(
+                Application.employee_id == employee_id,
+                Application.client_id.in_(target_client_ids),
+            )
+            .group_by(Application.client_id)
+        )).all()
+    )
+
     client_progress = []
     total_target = 0
     total_achieved = 0
 
     for target, client_name in targets:
-        achieved_q = select(func.count(Application.id)).where(
-            Application.employee_id == employee_id,
-            Application.client_id == target.client_id,
-        )
-        achieved = (await db.execute(achieved_q)).scalar() or 0
+        achieved = achieved_map.get(target.client_id, 0)
 
         completion_pct = 0.0
         if target.daily_target > 0:

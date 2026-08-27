@@ -23,6 +23,10 @@ from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead
 async def seed_database():
     print("🌱 Initializing clean production database schema in Neon PostgreSQL...", flush=True)
 
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     async with async_session_factory() as db:
         # Clear all tables in correct FK order
         await db.execute(delete(ChatRead))

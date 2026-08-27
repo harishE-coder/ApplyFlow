@@ -64,7 +64,19 @@ async def login(
     await log_activity(db, user.id, "login")
 
     # Immediate cache population & background dashboard pre-warming
-    _user_cache[str(user.id)] = (time.time() + 60.0, user)
+    _user_cache[str(user.id)] = (
+        time.time() + 60.0,
+        {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "client_id": user.client_id,
+            "is_active": user.is_active,
+            "phone": getattr(user, "phone", None),
+            "status": getattr(user, "status", "active"),
+        },
+    )
     asyncio.create_task(warm_user_dashboard(user.id, user.role, user.email))
 
     return AuthResponse(user=UserResponse.model_validate(user))

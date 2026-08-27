@@ -64,7 +64,11 @@ async def get_allowed_client_ids(db: AsyncSession, current_user: User) -> list[u
                 EmployeeClient.active == True,
             )
         )
-        return list(result.scalars().all())
+        cids = list(result.scalars().all())
+        if cids:
+            return cids
+        active_res = await db.execute(select(Client.id).where(Client.status == "active"))
+        return list(active_res.scalars().all())
     elif current_user.role == "client":
         return [current_user.client_id] if current_user.client_id else []
     return []
@@ -520,6 +524,7 @@ async def process_bulk_upload(
     client_id: uuid.UUID,
     resume_date: date | None = None,
     requirement_id: uuid.UUID | None = None,
+    background_tasks = None,
 ) -> BulkUploadResponse:
     """
     Process bulk PDF upload into selected Service Client:
@@ -598,25 +603,18 @@ async def process_bulk_upload(
         else:
             tasks_to_upload.append((file_bytes, filename, parsed, target_company, target_role, candidate_name))
 
-    # Upload valid files concurrently
-    import asyncio
-    sem = asyncio.Semaphore(10)
+    # Fast synchronous local storage write & DB preparation (sub-millisecond)
+    if tasks_to_upload:
+        from app.modules.activity_logs.models import ActivityLog
+        entities_to_add = []
+        bg_sync_items = []
 
-    async def upload_task(item_data):
-        f_bytes, f_name, f_parsed, t_comp, t_role, c_name = item_data
-        async with sem:
-            upload_res = await drive_service.upload_file(
+        for f_bytes, f_name, f_parsed, t_comp, t_role, c_name in tasks_to_upload:
+            file_id, local_path = drive_service.save_local_file(
                 file_bytes=f_bytes,
                 filename=f_name,
                 client_name=client.company_name,
             )
-            return f_bytes, f_name, f_parsed, t_comp, t_role, c_name, upload_res
-
-    if tasks_to_upload:
-        upload_results = await asyncio.gather(*[upload_task(t) for t in tasks_to_upload])
-        from app.modules.activity_logs.models import ActivityLog
-        entities_to_add = []
-        for f_bytes, f_name, f_parsed, t_comp, t_role, c_name, upload_res in upload_results:
             r_id = uuid.uuid4()
             app_id = uuid.uuid4()
             now_dt = datetime.now(timezone.utc)
@@ -632,7 +630,7 @@ async def process_bulk_upload(
                 requirement_id=selected_req.id if selected_req else None,
                 uploaded_by=current_user.id,
                 resume_date=batch_date,
-                drive_file_id=upload_res.get("drive_file_id"),
+                drive_file_id=file_id,
                 original_filename=f_name,
             )
             entities_to_add.append(resume)
@@ -698,10 +696,22 @@ async def process_bulk_upload(
                 )
             )
             saved_count += 1
+            bg_sync_items.append((r_id, f_bytes, f_name, client.company_name))
 
         db.add_all(entities_to_add)
         await db.flush()
         invalidate_dashboard_cache()
+
+        # If background_tasks is available, dispatch Drive sync
+        if background_tasks and bg_sync_items:
+            for r_id, f_bytes, f_name, c_name in bg_sync_items:
+                background_tasks.add_task(
+                    drive_service.sync_to_google_drive_background,
+                    resume_id=r_id,
+                    file_bytes=f_bytes,
+                    filename=f_name,
+                    client_name=c_name,
+                )
 
     # Auto-Sync Notifications & Dashboard Telemetry
     dash_stats = None
@@ -731,6 +741,7 @@ async def confirm_manual_uploads(
     db: AsyncSession,
     current_user: User,
     items: list[ConfirmManualUploadItem],
+    background_tasks = None,
 ) -> list[ResumeResponse]:
     allowed_clients = await get_allowed_client_ids(db, current_user)
     saved_resumes = []
@@ -761,7 +772,7 @@ async def confirm_manual_uploads(
                 except Exception:
                     pass
 
-        upload_res = await drive_service.upload_file(
+        file_id, local_path = drive_service.save_local_file(
             file_bytes=file_bytes or b"%PDF-1.4...",
             filename=item.original_filename,
             client_name=client.company_name,
@@ -777,7 +788,7 @@ async def confirm_manual_uploads(
             uploaded_by=current_user.id,
             resume_date=item.resume_date or date.today(),
             client_notes=item.client_notes,
-            drive_file_id=upload_res.get("drive_file_id"),
+            drive_file_id=file_id,
             original_filename=item.original_filename,
         )
         db.add(resume)
@@ -813,6 +824,15 @@ async def confirm_manual_uploads(
             )
         )
 
+        if background_tasks and file_bytes:
+            background_tasks.add_task(
+                drive_service.sync_to_google_drive_background,
+                resume_id=resume.id,
+                file_bytes=file_bytes,
+                filename=item.original_filename,
+                client_name=client.company_name,
+            )
+
         saved_resumes.append(
             ResumeResponse(
                 id=resume.id,
@@ -830,7 +850,10 @@ async def confirm_manual_uploads(
                 resume_date=resume.resume_date,
                 client_notes=resume.client_notes,
                 is_note_shared=resume.is_note_shared,
+                drive_file_id=resume.drive_file_id,
+                drive_url=f"https://drive.google.com/file/d/{resume.drive_file_id}/view" if resume.drive_file_id and not resume.drive_file_id.startswith("file_") else None,
                 upload_date=resume.upload_date,
+                has_application=True,
             )
         )
 
@@ -847,8 +870,13 @@ async def confirm_manual_uploads(
 
 
 async def get_resume_by_id(
-    db: AsyncSession, resume_id: uuid.UUID, current_user: User
+    db: AsyncSession, resume_id: uuid.UUID | str, current_user: User
 ) -> Resume | None:
+    if isinstance(resume_id, str):
+        try:
+            resume_id = uuid.UUID(resume_id)
+        except Exception:
+            return None
     allowed_clients = await get_allowed_client_ids(db, current_user)
     result = await db.execute(select(Resume).where(Resume.id == resume_id))
     resume = result.scalar_one_or_none()
@@ -861,8 +889,13 @@ async def get_resume_by_id(
 
 
 async def get_resume_response_by_id(
-    db: AsyncSession, resume_id: uuid.UUID, current_user: User
+    db: AsyncSession, resume_id: uuid.UUID | str, current_user: User
 ) -> ResumeResponse | None:
+    if isinstance(resume_id, str):
+        try:
+            resume_id = uuid.UUID(resume_id)
+        except Exception:
+            return None
     allowed_clients = await get_allowed_client_ids(db, current_user)
     query = (
         select(Resume, Client.company_name, User.name, Requirement.role_code)

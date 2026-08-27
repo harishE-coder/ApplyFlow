@@ -40,7 +40,11 @@ async def get_clients(
                 EmployeeClient.active == True,  # noqa: E712
             )
         )
-        query = query.where(Client.id.in_(subquery))
+        emp_cids = (await db.execute(subquery)).scalars().all()
+        if emp_cids:
+            query = query.where(Client.id.in_(emp_cids))
+        else:
+            query = query.where(Client.status == "active")
     elif current_user.role == "client":
         if current_user.client_id:
             query = query.where(Client.id == current_user.client_id)

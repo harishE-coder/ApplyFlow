@@ -23,6 +23,7 @@ from app.modules.chat.schemas import (
 from app.modules.resumes.service import get_allowed_client_ids
 from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
 from app.services.google_drive import drive_service, UPLOAD_DIR
+from app.core.cache import invalidate_chat_cache, cache
 
 
 async def check_room_access(db: AsyncSession, user: User, room_id: uuid.UUID) -> ChatRoom:
@@ -383,6 +384,7 @@ async def mark_read(
         db.add(read_rec)
 
     await db.flush()
+    invalidate_chat_cache()
 
 
 async def delete_message(db: AsyncSession, message_id: uuid.UUID, user: User) -> dict:
@@ -396,6 +398,7 @@ async def delete_message(db: AsyncSession, message_id: uuid.UUID, user: User) ->
     room_id = str(msg.room_id)
     await db.delete(msg)
     await db.flush()
+    invalidate_chat_cache()
     return {"message": "Message deleted", "room_id": room_id}
 
 

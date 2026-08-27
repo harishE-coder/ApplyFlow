@@ -61,6 +61,42 @@ export function invalidateCache(prefix = '') {
   }
 }
 
+export function invalidateScopedCache(url = '') {
+  if (!url) {
+    cacheMap.clear();
+    return;
+  }
+  const cleanUrl = url.toLowerCase();
+
+  if (cleanUrl.includes('/resumes') || cleanUrl.includes('/applications')) {
+    invalidateCache('/resumes');
+    invalidateCache('/applications');
+    invalidateCache('/dashboard');
+    invalidateCache('/reports');
+  } else if (cleanUrl.includes('/requirements')) {
+    invalidateCache('/requirements');
+    invalidateCache('/dashboard');
+    invalidateCache('/reports');
+  } else if (cleanUrl.includes('/targets')) {
+    invalidateCache('/targets');
+    invalidateCache('/dashboard');
+  } else if (cleanUrl.includes('/attendance')) {
+    invalidateCache('/attendance');
+    invalidateCache('/dashboard');
+  } else if (cleanUrl.includes('/notifications')) {
+    invalidateCache('/notifications');
+  } else if (cleanUrl.includes('/chat')) {
+    invalidateCache('/chat');
+  } else if (cleanUrl.includes('/users') || cleanUrl.includes('/clients')) {
+    invalidateCache('/users');
+    invalidateCache('/clients');
+    invalidateCache('/dashboard');
+  } else {
+    invalidateCache(url);
+    invalidateCache('/dashboard');
+  }
+}
+
 // Wrapper with in-memory caching and concurrent request deduplication
 const api = {
   ...rawAxios,
@@ -114,26 +150,27 @@ const api = {
   },
 
   async post(url, data, config) {
-    invalidateCache();
+    invalidateScopedCache(url);
     return rawAxios.post(url, data, config);
   },
 
   async put(url, data, config) {
-    invalidateCache();
+    invalidateScopedCache(url);
     return rawAxios.put(url, data, config);
   },
 
   async patch(url, data, config) {
-    invalidateCache();
+    invalidateScopedCache(url);
     return rawAxios.patch(url, data, config);
   },
 
   async delete(url, config) {
-    invalidateCache();
+    invalidateScopedCache(url);
     return rawAxios.delete(url, config);
   },
 
   invalidateCache,
+  invalidateScopedCache,
 };
 
 export default api;

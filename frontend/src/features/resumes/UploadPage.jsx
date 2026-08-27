@@ -107,9 +107,21 @@ const UploadQueueRow = React.memo(function UploadQueueRow({
       {/* 6. Status Badge */}
       <td className="px-4 py-3 whitespace-nowrap">
         {row.status === 'valid' && (
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0]">
-            ✅ Valid
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0] inline-flex items-center gap-1 w-fit">
+              ✅ ServiceClient Verified
+            </span>
+            {!row.company && (
+              <span className="text-[10px] text-[#64748B] flex items-center gap-0.5">
+                ⚠ Company not detected (optional)
+              </span>
+            )}
+            {!row.role && (
+              <span className="text-[10px] text-[#64748B] flex items-center gap-0.5">
+                ⚠ Role not detected (optional)
+              </span>
+            )}
+          </div>
         )}
         {row.status === 'duplicate' && (
           <span
@@ -217,75 +229,79 @@ export function UploadPage() {
     }
   }, [location.state]);
 
-  // Client-side Filename Parser matching Locked Standard:
-  // ServiceClient_Company_RoleOrRoleID_ResumeIdentifier.pdf
+  // Clean candidate name from filename noise
+  const cleanCandidateName = (raw) => {
+    if (!raw) return 'Candidate';
+    let cleaned = raw.replace(/\.pdf$/i, '');
+    cleaned = cleaned.replace(/[\(\[\{]\d+[\)\]\}]/g, '');
+    cleaned = cleaned.replace(/\b(resume|cv|biodata|profile|curriculum|vitae)\b/gi, '');
+    cleaned = cleaned.replace(/[-_]+/g, ' ');
+    cleaned = cleaned.replace(/([a-z])([A-Z])/g, '$1 $2');
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    return cleaned.replace(/\b\w/g, (c) => c.toUpperCase()) || 'Candidate';
+  };
+
+  // Client-side Filename Parser with Relaxed Employee Validation:
+  // ServiceClient is the ONLY strict requirement; Company and Role are optional.
   const parseFilename = (filename, selectedClientName = '') => {
     const stem = filename.replace(/\.[^/.]+$/, '').trim();
     const parts = stem.split('_').filter(Boolean);
 
-    // Rule 2: Minimum 4 segments required
-    if (parts.length < 4) {
-      return {
-        service_client: parts[0] ? parts[0].replace(/([a-z])([A-Z])/g, '$1 $2').trim() : 'Unknown Client',
-        company: parts[1] || 'General',
-        role: parts[2] || '',
-        resume_identifier: parts[parts.length - 1] || '',
-        resume_id_tag: parts[parts.length - 1] || '',
-        status: 'needs_review',
-        error: 'Invalid filename format. Expected: ServiceClient_Company_RoleOrRoleID_ResumeIdentifier.pdf',
-        clientMatch: false,
-      };
-    }
+    let serviceClient = selectedClientName || (parts[0] ? parts[0].replace(/([a-z])([A-Z])/g, '$1 $2').trim() : 'General Client');
+    let company = '';
+    let role = '';
+    let resumeIdentifier = '';
+    let resumeIdTag = '';
+    let candidateName = '';
 
-    const rawClient = parts[0];
-    const rawCompany = parts[1];
-    const rawRoleParts = parts.slice(2, -1);
-    const rawIdentifier = parts[parts.length - 1];
+    // Standard 4+ segments format
+    if (parts.length >= 4) {
+      const rawCompany = parts[1];
+      const rawRoleParts = parts.slice(2, -1);
+      const rawIdentifier = parts[parts.length - 1];
 
-    // 1. Service Client
-    const serviceClient = rawClient.replace(/([a-z])([A-Z])/g, '$1 $2').trim();
-
-    // 2. Target Company
-    const company = rawCompany.length <= 4 ? rawCompany.toUpperCase() : rawCompany.charAt(0).toUpperCase() + rawCompany.slice(1);
-
-    // 3. Role or Role ID (e.g. JavaDeveloper, SDEII, INF-PY-02, TCS-JAVA-01)
-    const roleRaw = rawRoleParts.join('_');
-    let role = roleRaw;
-    if (roleRaw.includes('-') || (/\d/.test(roleRaw) && /[A-Za-z]/.test(roleRaw) && roleRaw.length <= 10)) {
-      if (/^SDE[IVX\d]+$/i.test(roleRaw)) {
-        role = roleRaw.replace(/^(SDE)([IVX\d]+)$/i, '$1 $2').toUpperCase();
+      company = rawCompany.length <= 4 ? rawCompany.toUpperCase() : rawCompany.charAt(0).toUpperCase() + rawCompany.slice(1);
+      const roleRaw = rawRoleParts.join('_');
+      if (roleRaw.includes('-') || (/\d/.test(roleRaw) && /[A-Za-z]/.test(roleRaw) && roleRaw.length <= 10)) {
+        role = /^SDE[IVX\d]+$/i.test(roleRaw) ? roleRaw.replace(/^(SDE)([IVX\d]+)$/i, '$1 $2').toUpperCase() : roleRaw.toUpperCase();
       } else {
-        role = roleRaw.toUpperCase();
+        role = roleRaw.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').trim();
+        role = role.charAt(0).toUpperCase() + role.slice(1);
       }
+      resumeIdentifier = rawIdentifier;
+      resumeIdTag = rawIdentifier;
+      candidateName = cleanCandidateName(rawIdentifier);
     } else {
-      role = roleRaw.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').trim();
-      role = role.charAt(0).toUpperCase() + role.slice(1);
+      // Natural / relaxed filenames (e.g. Suresh_resume (3).pdf, John_Doe.pdf)
+      candidateName = cleanCandidateName(parts[0] || stem);
+      resumeIdentifier = parts[parts.length - 1] || stem;
+      resumeIdTag = '';
+
+      // Detect any role keywords if present
+      for (let i = 1; i < parts.length; i++) {
+        const cleanP = cleanCandidateName(parts[i]);
+        if (/(dev|engineer|lead|architect|qa|tester|sde|java|python|react|analyst)/i.test(cleanP)) {
+          role = cleanP;
+        } else if (!company && cleanP.length <= 20 && !/(resume|cv)/i.test(cleanP)) {
+          company = cleanP;
+        }
+      }
     }
 
-    // 4. Resume Identifier
-    const resumeIdentifier = rawIdentifier;
-
-    // Rule 1: Service Client match verification
-    let clientMatch = true;
-    let error = null;
     if (selectedClientName) {
-      const normParsed = rawClient.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-      const normSelected = selectedClientName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-      if (normParsed !== normSelected) {
-        clientMatch = false;
-        error = `Filename client does not match selected Service Client.`;
-      }
+      serviceClient = selectedClientName;
     }
 
     return {
       service_client: serviceClient,
       company,
       role,
-      resume_identifier: resumeIdentifier,
-      resume_id_tag: resumeIdentifier,
-      status: clientMatch ? 'valid' : 'needs_review',
-      error,
-      clientMatch,
+      resume_identifier: resumeIdentifier || 'RES01',
+      resume_id_tag: resumeIdTag,
+      candidate_name: candidateName || 'Candidate',
+      status: 'valid',
+      error: null,
+      clientMatch: true,
     };
   };
 
@@ -315,7 +331,7 @@ export function UploadPage() {
         role: parsed.role,
         resume_identifier: parsed.resume_identifier,
         resume_id_tag: parsed.resume_id_tag || '',
-        candidate_name: parsed.resume_identifier || 'Candidate',
+        candidate_name: parsed.candidate_name || 'Candidate',
         status: parsed.status, // 'valid' | 'duplicate' | 'needs_review'
         error: parsed.error,
         clientMatch: parsed.clientMatch,
@@ -335,6 +351,23 @@ export function UploadPage() {
     setUploadSuccessSummary(null);
   };
 
+  // Sync existing queue items when selectedClientId changes
+  useEffect(() => {
+    if (selectedClientId && queue.length > 0) {
+      const selectedClientObj = assignedClients.find((c) => c.id === selectedClientId);
+      const selectedClientName = selectedClientObj?.company_name || '';
+      setQueue((prev) =>
+        prev.map((it) => ({
+          ...it,
+          service_client: selectedClientName || it.service_client,
+          clientMatch: true,
+          status: it.status === 'duplicate' ? 'duplicate' : 'valid',
+        }))
+      );
+      runDuplicateCheck(queue, selectedClientId);
+    }
+  }, [selectedClientId]);
+
   // Run Duplicate Detection via Backend API: POST /api/resumes/check-duplicates
   const runDuplicateCheck = async (itemsToCheck, cId) => {
     if (!cId || itemsToCheck.length === 0) return;
@@ -345,8 +378,8 @@ export function UploadPage() {
         items: itemsToCheck.map((it) => ({
           filename: it.filename,
           company: it.company,
-          candidate_name: it.resume_identifier || it.candidate_name,
-          resume_id_tag: it.resume_identifier || it.resume_id_tag || null,
+          candidate_name: it.candidate_name || it.resume_identifier,
+          resume_id_tag: it.resume_id_tag || it.resume_identifier || null,
         })),
       };
 

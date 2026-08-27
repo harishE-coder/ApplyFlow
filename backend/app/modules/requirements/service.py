@@ -62,19 +62,29 @@ async def get_requirements(
     result = await db.execute(query)
     rows = result.all()
 
+    if not rows:
+        return []
+
+    req_ids = [req.id for req, _ in rows]
+    res_counts_map = dict(
+        (await db.execute(
+            select(Resume.requirement_id, func.count(Resume.id))
+            .where(Resume.requirement_id.in_(req_ids))
+            .group_by(Resume.requirement_id)
+        )).all()
+    )
+    app_counts_map = dict(
+        (await db.execute(
+            select(Application.requirement_id, func.count(Application.id))
+            .where(Application.requirement_id.in_(req_ids))
+            .group_by(Application.requirement_id)
+        )).all()
+    )
+
     response = []
     for req, client_name in rows:
-        res_count = (
-            await db.execute(
-                select(func.count(Resume.id)).where(Resume.requirement_id == req.id)
-            )
-        ).scalar() or 0
-
-        app_count = (
-            await db.execute(
-                select(func.count(Application.id)).where(Application.requirement_id == req.id)
-            )
-        ).scalar() or 0
+        res_count = res_counts_map.get(req.id, 0)
+        app_count = app_counts_map.get(req.id, 0)
 
         creator_name = req.creator.name if req.creator else None
         completer_name = req.completer.name if req.completer else None

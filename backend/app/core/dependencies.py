@@ -63,9 +63,19 @@ async def get_current_user(
     # Fast memory cache check
     cached = _user_cache.get(str(user_id))
     if cached:
-        cached_expires, cached_user = cached
+        cached_expires, user_dict = cached
         if time.time() < cached_expires:
-            return cached_user
+            u = User(
+                id=user_dict["id"],
+                name=user_dict["name"],
+                email=user_dict["email"],
+                role=user_dict["role"],
+                client_id=user_dict.get("client_id"),
+                is_active=user_dict.get("is_active", True),
+                phone=user_dict.get("phone"),
+                status=user_dict.get("status", "active"),
+            )
+            return u
         else:
             _user_cache.pop(str(user_id), None)
 
@@ -80,8 +90,20 @@ async def get_current_user(
             detail="User not found or inactive",
         )
 
-    # Cache for 30 seconds
-    _user_cache[str(user_id)] = (time.time() + 30.0, user)
+    # Cache user dict for 30 seconds
+    _user_cache[str(user_id)] = (
+        time.time() + 30.0,
+        {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "client_id": user.client_id,
+            "is_active": user.is_active,
+            "phone": getattr(user, "phone", None),
+            "status": getattr(user, "status", "active"),
+        },
+    )
 
     return user
 

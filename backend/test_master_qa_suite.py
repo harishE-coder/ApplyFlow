@@ -452,7 +452,7 @@ async def run_master_qa_suite():
     for i in range(10):
         tag = f"RESQA{uuid.uuid4().hex[:4].upper()}"
         fname = f"ABCStaffing_TCS_JavaLead_{tag}.pdf"
-        files_10.append(("files", (fname, mock_pdf, "application/pdf")))
+        files_10.append(("files", (fname, b"%PDF-1.4 mock pdf content for testing", "application/pdf")))
 
     upload_10_res = await employee_client.post(
         "/api/resumes/upload",
@@ -484,7 +484,7 @@ async def run_master_qa_suite():
     spec_upload = await employee_client.post(
         "/api/resumes/upload",
         data={"client_id": abc_client["id"], "resume_date": date.today().isoformat()},
-        files=[("files", (special_fname, mock_pdf, "application/pdf"))],
+        files=[("files", (special_fname, b"%PDF-1.4 mock pdf content", "application/pdf"))],
     )
     if spec_upload.status_code == 200 and spec_upload.json()["saved_count"] == 1:
         runner.record_pass("Upload", "Special Characters Filename Parser & Storage")
@@ -498,13 +498,15 @@ async def run_master_qa_suite():
         if dl_res.status_code == 200 and dl_res.headers.get("content-type") == "application/pdf" and b"%PDF" in dl_res.content[:10]:
             runner.record_pass("Storage", "Resume PDF Download Streaming (Valid PDF Header)")
         else:
-            runner.record_fail("Storage", "Resume PDF Download Streaming", "Critical", f"Status: {dl_res.status_code}, Type: {dl_res.headers.get('content-type')}")
+            runner.record_fail("Storage", "Resume PDF Download Streaming", "Critical", f"Status: {dl_res.status_code}, Type: {dl_res.headers.get('content-type')}, Detail: {dl_res.text[:100]}")
 
         prev_res = await employee_client.get(f"/api/resumes/{test_res_id}/preview")
         if prev_res.status_code == 200 and prev_res.headers.get("content-type") == "application/pdf":
             runner.record_pass("Storage", "Resume Inline PDF Preview Streaming")
         else:
-            runner.record_fail("Storage", "Resume Inline PDF Preview Streaming", "High", f"Status: {prev_res.status_code}")
+            runner.record_fail("Storage", "Resume Inline PDF Preview Streaming", "High", f"Status: {prev_res.status_code}, Detail: {prev_res.text[:100]}")
+    else:
+        runner.record_fail("Storage", "Resume PDF Download Streaming", "Critical", "saved_resume_ids was empty!")
 
     # 5.5 Resume Search & Filters
     search_res = await employee_client.get("/api/resumes", params={"client_id": abc_client["id"], "search": "Java"})

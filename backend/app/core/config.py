@@ -53,12 +53,10 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Async connection URL for SQLAlchemy asyncpg engine."""
-        if self.use_sqlite:
-            return "sqlite+aiosqlite:///./applyflow.db"
+        import re
 
-        raw = self.database_url_override or self.database_url_raw
+        raw = (self.database_url_override or self.database_url_raw or "").strip()
         if raw:
-            raw = raw.strip()
             if raw.startswith("postgres://"):
                 raw = "postgresql+asyncpg://" + raw[len("postgres://"):]
             elif raw.startswith("postgresql://") and not raw.startswith("postgresql+asyncpg://"):
@@ -67,7 +65,14 @@ class Settings(BaseSettings):
             raw = raw.replace("sslmode=require", "ssl=require")
             raw = raw.replace("sslmode=prefer", "ssl=prefer")
             raw = raw.replace("sslmode=disable", "ssl=disable")
+            # Remove channel_binding (Neon copy string includes it, unsupported by asyncpg)
+            raw = re.sub(r'[?&]channel_binding=[^&]*', '', raw)
+            if '?' not in raw and '&' in raw:
+                raw = raw.replace('&', '?', 1)
             return raw
+
+        if self.use_sqlite:
+            return "sqlite+aiosqlite:///./applyflow.db"
 
         return (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
@@ -77,12 +82,10 @@ class Settings(BaseSettings):
     @property
     def database_url_sync(self) -> str:
         """Sync URL for Alembic and migration scripts."""
-        if self.use_sqlite:
-            return "sqlite:///./applyflow.db"
+        import re
 
-        raw = self.database_url_override or self.database_url_raw
+        raw = (self.database_url_override or self.database_url_raw or "").strip()
         if raw:
-            raw = raw.strip()
             if raw.startswith("postgresql+asyncpg://"):
                 raw = "postgresql+psycopg2://" + raw[len("postgresql+asyncpg://"):]
             elif raw.startswith("postgres://"):
@@ -91,7 +94,13 @@ class Settings(BaseSettings):
                 raw = "postgresql+psycopg2://" + raw[len("postgresql://"):]
             # psycopg2 expects 'sslmode=require'
             raw = raw.replace("?ssl=require", "?sslmode=require").replace("&ssl=require", "&sslmode=require")
+            raw = re.sub(r'[?&]channel_binding=[^&]*', '', raw)
+            if '?' not in raw and '&' in raw:
+                raw = raw.replace('&', '?', 1)
             return raw
+
+        if self.use_sqlite:
+            return "sqlite:///./applyflow.db"
 
         return (
             f"postgresql://{self.db_user}:{self.db_password}"

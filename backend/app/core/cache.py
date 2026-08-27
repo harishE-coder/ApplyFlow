@@ -54,3 +54,7 @@ def invalidate_dashboard_cache():
 def invalidate_notifications_cache():
     """Invalidates notification caches."""
     return cache.invalidate_tag("notifications")
+
+def invalidate_chat_cache():
+    """Invalidates chat unread and room caches."""
+    return cache.invalidate_tag("chat")
