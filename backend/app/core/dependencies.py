@@ -60,24 +60,17 @@ async def get_current_user(
             detail="Invalid token payload",
         )
 
-    now = time.time()
-    cached = _user_cache.get(user_id)
-    if cached and (now - cached[0] < 30.0):
-        return cached[1]
-
     result = await db.execute(
         select(User).where(User.id == UUID(user_id), User.is_active == True)  # noqa: E712
     )
     user = result.scalar_one_or_none()
 
     if not user:
-        _user_cache.pop(user_id, None)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
 
-    _user_cache[user_id] = (now, user)
     return user
 
 

@@ -78,7 +78,7 @@ async def generate_excel_report(
     resumes_res = await db.execute(r_query)
     resumes_data = [
         {
-            "Resume ID": r.display_id,
+            "Resume ID": r.resume_id_tag or str(r.id)[:8],
             "Candidate Name": r.candidate_name,
             "Target Company": r.company,
             "Role": r.role,
@@ -112,7 +112,7 @@ async def generate_excel_report(
     apps_data = [
         {
             "Application ID": str(app.id)[:8],
-            "Resume ID": resume.display_id if resume else "N/A",
+            "Resume ID": (resume.resume_id_tag or str(resume.id)[:8]) if resume else "N/A",
             "Candidate Name": resume.candidate_name if resume else (app.candidate_name or "N/A"),
             "Target Company": resume.company if resume else (app.company or "N/A"),
             "Role": resume.role if resume else (app.role or "N/A"),
@@ -223,7 +223,7 @@ async def generate_pdf_report(
 
     table_data = [["ID", "Candidate", "Company", "Role", "Req Code", "Client", "Status"]]
     for app, resume, c_name, u_name, req_code in rows:
-        disp_id = resume.display_id if resume else str(app.id)[:8]
+        disp_id = (resume.resume_id_tag or str(resume.id)[:8]) if resume else str(app.id)[:8]
         cand_name = (resume.candidate_name if resume else (app.candidate_name or "N/A"))[:16]
         comp = (resume.company if resume else (app.company or "N/A"))[:10]
         role_str = (resume.role if resume else (app.role or "N/A"))[:14]

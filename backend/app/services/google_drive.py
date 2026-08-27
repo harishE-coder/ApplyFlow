@@ -43,7 +43,16 @@ class DriveService:
         """
         file_id = f"file_{uuid.uuid4().hex}"
 
-        # 1. Try Google Apps Script Web App API
+        # 1. Always ensure local storage copy exists for instant fast retrieval
+        client_dir = UPLOAD_DIR / client_name.replace(" ", "_")
+        client_dir.mkdir(parents=True, exist_ok=True)
+        local_filename = f"{file_id}_{filename}"
+        local_path = client_dir / local_filename
+
+        with open(local_path, "wb") as f:
+            f.write(file_bytes)
+
+        # 2. Attempt Google Apps Script upload with fast timeout
         if self.script_url:
             try:
                 b64_content = base64.b64encode(file_bytes).decode("utf-8")
@@ -54,7 +63,7 @@ class DriveService:
                     "rootFolderId": self.root_folder_id,
                 }
 
-                async with httpx.AsyncClient(follow_redirects=True, timeout=45.0) as client:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
                     response = await client.post(
                         f"{self.script_url}?action=upload",
                         data=payload,
@@ -71,21 +80,12 @@ class DriveService:
                             "storage_type": "google_drive",
                         }
                     else:
-                        print(f"⚠️ Apps Script returned non-success: {data}, falling back to local storage.")
+                        print(f"⚠️ Apps Script returned non-success: {data}, using local storage.")
                 else:
-                    print(f"⚠️ Apps Script HTTP {response.status_code}: {response.text[:200]}, falling back to local storage.")
+                    print(f"⚠️ Apps Script HTTP {response.status_code}, using local storage.")
 
             except Exception as e:
-                print(f"⚠️ Google Apps Script upload exception ({e}), saving to local storage fallback.")
-
-        # 2. Local Storage Fallback
-        client_dir = UPLOAD_DIR / client_name.replace(" ", "_")
-        client_dir.mkdir(parents=True, exist_ok=True)
-        local_filename = f"{file_id}_{filename}"
-        local_path = client_dir / local_filename
-
-        with open(local_path, "wb") as f:
-            f.write(file_bytes)
+                print(f"⚠️ Google Apps Script upload notice ({type(e).__name__}), using local storage fallback.")
 
         return {
             "drive_file_id": file_id,

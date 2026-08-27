@@ -58,7 +58,7 @@ export function ResumesPage() {
   const [dateFilter, setDateFilter] = useState('all'); // 'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom'
   const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
   const [page, setPage] = useState(1);
-  const pageSize = 25;
+  const pageSize = 20;
 
   // Metadata filter options
   const [clients, setClients] = useState([]);
@@ -478,12 +478,18 @@ export function ResumesPage() {
           </div>
 
           {/* Dense Pagination Footer */}
-          <div className="p-3 bg-[#F8FAFC] border-t border-[#E2E8F0] flex items-center justify-between text-caption text-[#64748B]">
-            <span>
-              Page {page} of {totalPages}
-            </span>
+          <div className="p-3 bg-[#F8FAFC] border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2 text-caption text-[#64748B]">
+            <div>
+              <span>Showing </span>
+              <strong className="text-[#081226] font-semibold">
+                {totalResumes > 0 ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, totalResumes)}
+              </strong>
+              <span> of </span>
+              <strong className="text-[#081226] font-semibold">{totalResumes}</strong>
+              <span> candidates</span>
+            </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
               <Button
                 variant="outline"
                 size="sm"
@@ -493,6 +499,32 @@ export function ResumesPage() {
               >
                 Prev
               </Button>
+
+              {/* Direct Page Numbers */}
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pNum = i + 1;
+                if (totalPages > 5 && page > 3) {
+                  pNum = page - 2 + i;
+                  if (pNum > totalPages) pNum = totalPages - (4 - i);
+                }
+                if (pNum <= 0 || pNum > totalPages) return null;
+                return (
+                  <button
+                    key={pNum}
+                    type="button"
+                    onClick={() => setPage(pNum)}
+                    className={cn(
+                      'w-7 h-7 rounded-lg text-caption font-bold transition-all',
+                      page === pNum
+                        ? 'bg-[#2563EB] text-white shadow-sm'
+                        : 'bg-white text-[#64748B] hover:bg-[#F1F5F9] border border-[#E2E8F0]'
+                    )}
+                  >
+                    {pNum}
+                  </button>
+                );
+              })}
+
               <Button
                 variant="outline"
                 size="sm"

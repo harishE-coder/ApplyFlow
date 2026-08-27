@@ -19,15 +19,16 @@ def _create_engine():
     return create_async_engine(
         url,
         echo=False,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=10,
+        max_overflow=20,
         pool_pre_ping=True,
-        pool_recycle=60,
-        pool_timeout=30,
+        pool_recycle=300,
+        pool_timeout=60,
         connect_args={
             "statement_cache_size": 0,
             "prepared_statement_cache_size": 0,
             "command_timeout": 60,
+            "timeout": 60,
             "server_settings": {"jit": "off"},
         },
     )

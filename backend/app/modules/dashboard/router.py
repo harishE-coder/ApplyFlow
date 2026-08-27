@@ -23,6 +23,37 @@ from sqlalchemy import select
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
+@router.get("/home")
+async def get_dashboard_home_universal(
+    client_id: uuid.UUID | None = Query(None, description="Filter by Service Client ID"),
+    employee_id: uuid.UUID | None = Query(None, description="Filter by Employee ID"),
+    date_range: str | None = Query("today", description="Filter by date range"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Universal Single Dashboard Endpoint:
+    Dispatches by role and returns all metrics, cards, targets, attendance, and metadata in 1 request.
+    """
+    effective_range = custom_date or date_filter or date_range or "today"
+    if current_user.role in ("admin", "sub_admin"):
+        return await service.get_admin_dashboard_home(
+            db, current_user=current_user, client_id=client_id, employee_id=employee_id, date_range=effective_range, custom_date=custom_date
+        )
+    elif current_user.role == "employee":
+        return await service.get_employee_dashboard_home(
+            db, current_user=current_user, client_id=client_id, date_range=effective_range, custom_date=custom_date
+        )
+    elif current_user.role == "client":
+        return await service.get_client_dashboard_home(db, current_user=current_user)
+    else:
+        return await service.get_admin_dashboard_home(
+            db, current_user=current_user, client_id=client_id, employee_id=employee_id, date_range=effective_range, custom_date=custom_date
+        )
+
+
 @router.get("/admin/home", response_model=AdminHomeResponse, dependencies=[Depends(require_role("admin", "sub_admin"))])
 async def get_admin_dashboard_home_endpoint(
     client_id: uuid.UUID | None = Query(None, description="Filter by Service Client ID"),

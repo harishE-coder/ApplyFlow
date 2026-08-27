@@ -838,6 +838,17 @@ async def list_applications(
     page: int = 1,
     page_size: int = 50,
 ):
+    # Role-based client scoping
+    allowed_clients = None
+    if current_user.role == "sub_admin":
+        from app.modules.users.service import get_sub_admin_client_ids
+        allowed_clients = await get_sub_admin_client_ids(db, current_user.id)
+    elif current_user.role == "employee":
+        from app.modules.resumes.service import get_allowed_client_ids
+        allowed_clients = await get_allowed_client_ids(db, current_user)
+    elif current_user.role == "client":
+        allowed_clients = [current_user.client_id] if current_user.client_id else []
+
     # Base filtering conditions
     filters = []
     if allowed_clients is not None:

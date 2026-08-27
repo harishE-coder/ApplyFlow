@@ -153,6 +153,13 @@ async def run_master_qa_suite():
             cl_usr = User(name="QA Client User", email=client_email, password_hash=hash_password(client_pass), role="client", client_id=abc_c.id, is_active=True, status="active")
             db.add(cl_usr)
             await db.flush()
+        else:
+            cl_usr.is_active = True
+            cl_usr.status = "active"
+            cl_usr.password_hash = hash_password(client_pass)
+            cl_usr.client_id = abc_c.id
+            db.add(cl_usr)
+            await db.flush()
 
         # Scoping assignments
         ec = (await db.execute(select(EmployeeClient).where(EmployeeClient.employee_id == emp.id, EmployeeClient.client_id == abc_c.id))).scalar_one_or_none()

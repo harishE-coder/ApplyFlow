@@ -191,39 +191,6 @@ async def lifespan(app: FastAPI):
                 pass
         print("✅ Database tables and columns verified.")
     else:
-        async def _init_indexes():
-            try:
-                async with engine.begin() as conn:
-                    indexes = [
-                        "CREATE INDEX IF NOT EXISTS ix_resumes_client_date ON resumes (client_id, resume_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_resumes_uploader_date ON resumes (uploaded_by, resume_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_resumes_client_comp ON resumes (client_id, company)",
-                        "CREATE INDEX IF NOT EXISTS ix_apps_emp_applied ON applications (employee_id, applied_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_apps_client_applied ON applications (client_id, applied_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_apps_status_applied ON applications (status, applied_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_apps_applied_date ON applications (applied_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_apps_updated_at ON applications (updated_at)",
-                        "CREATE INDEX IF NOT EXISTS ix_targets_emp_status ON targets (employee_id, status)",
-                        "CREATE INDEX IF NOT EXISTS ix_targets_client_status ON targets (client_id, status)",
-                        "CREATE INDEX IF NOT EXISTS ix_targets_effective_date ON targets (effective_date)",
-                        "CREATE INDEX IF NOT EXISTS ix_chat_messages_room_created ON chat_messages (room_id, created_at)",
-                        "CREATE INDEX IF NOT EXISTS ix_notifications_user_read_created ON notifications (user_id, is_read, created_at)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_role_active ON users (role, is_active)",
-                        "CREATE INDEX IF NOT EXISTS ix_users_email_active ON users (email, is_active)",
-                        "CREATE INDEX IF NOT EXISTS ix_emp_client_active ON employee_clients (client_id, active)",
-                        "CREATE INDEX IF NOT EXISTS ix_emp_client_emp_active ON employee_clients (employee_id, active)",
-                    ]
-                    for idx_sql in indexes:
-                        try:
-                            await conn.execute(sqlalchemy.text(idx_sql))
-                        except Exception:
-                            pass
-                print("🚀 Verified Neon PostgreSQL high-speed indexes successfully.")
-            except Exception as e:
-                print("Index verification notice:", e)
-
-        import asyncio
-        asyncio.create_task(_init_indexes())
         print("Connected to Neon PostgreSQL.")
 
     # Initialize production Super Admin if missing

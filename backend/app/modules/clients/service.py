@@ -57,19 +57,19 @@ async def get_clients(
 
     # Pre-fetch 1: assigned employees for all clients in 1 query
     emp_query = (
-        select(EmployeeClient.client_id, User, EmployeeClient.is_primary, EmployeeClient.active, EmployeeClient.assigned_at)
+        select(EmployeeClient.client_id, User.id, User.name, User.email, EmployeeClient.is_primary, EmployeeClient.active, EmployeeClient.assigned_at)
         .join(User, EmployeeClient.employee_id == User.id)
         .where(EmployeeClient.client_id.in_(client_ids), User.is_active == True)  # noqa: E712
         .order_by(EmployeeClient.is_primary.desc(), User.name)
     )
     emp_res = await db.execute(emp_query)
     emp_map = {}
-    for cid, u, is_prim, act, assigned_at in emp_res.all():
+    for cid, uid, uname, uemail, is_prim, act, assigned_at in emp_res.all():
         emp_map.setdefault(cid, []).append(
             AssignedEmployeeInfo(
-                id=u.id,
-                name=u.name,
-                email=u.email,
+                id=uid,
+                name=uname,
+                email=uemail,
                 is_primary=is_prim,
                 active=act,
                 assigned_at=assigned_at,
