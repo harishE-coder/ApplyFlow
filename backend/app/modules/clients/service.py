@@ -50,43 +50,22 @@ async def get_clients(
     result = await db.execute(query)
     clients = result.scalars().all()
 
-    response_list = []
-    for client in clients:
-        # Get assigned employees with ownership fields
-        emp_query = (
-            select(User, EmployeeClient.is_primary, EmployeeClient.active, EmployeeClient.assigned_at)
-            .join(EmployeeClient, EmployeeClient.employee_id == User.id)
-            .where(EmployeeClient.client_id == client.id, User.is_active == True)  # noqa: E712
-            .order_by(EmployeeClient.is_primary.desc(), User.name)
-        )
-        emp_result = await db.execute(emp_query)
-        emp_rows = emp_result.all()
+    if not clients:
+        return []
 
-        # Requirements counts
-        req_total_res = await db.execute(
-            select(func.count(Requirement.id)).where(Requirement.client_id == client.id)
-        )
-        req_total = req_total_res.scalar() or 0
+    client_ids = [c.id for c in clients]
 
-        req_active_res = await db.execute(
-            select(func.count(Requirement.id)).where(
-                Requirement.client_id == client.id, Requirement.status == "active"
-            )
-        )
-        req_active = req_active_res.scalar() or 0
-
-        # Resumes and Applications counts
-        resumes_count_res = await db.execute(
-            select(func.count(Resume.id)).where(Resume.client_id == client.id)
-        )
-        resumes_count = resumes_count_res.scalar() or 0
-
-        apps_count_res = await db.execute(
-            select(func.count(Application.id)).where(Application.client_id == client.id)
-        )
-        apps_count = apps_count_res.scalar() or 0
-
-        assigned_emps = [
+    # Pre-fetch 1: assigned employees for all clients in 1 query
+    emp_query = (
+        select(EmployeeClient.client_id, User, EmployeeClient.is_primary, EmployeeClient.active, EmployeeClient.assigned_at)
+        .join(User, EmployeeClient.employee_id == User.id)
+        .where(EmployeeClient.client_id.in_(client_ids), User.is_active == True)  # noqa: E712
+        .order_by(EmployeeClient.is_primary.desc(), User.name)
+    )
+    emp_res = await db.execute(emp_query)
+    emp_map = {}
+    for cid, u, is_prim, act, assigned_at in emp_res.all():
+        emp_map.setdefault(cid, []).append(
             AssignedEmployeeInfo(
                 id=u.id,
                 name=u.name,
@@ -95,29 +74,65 @@ async def get_clients(
                 active=act,
                 assigned_at=assigned_at,
             )
-            for u, is_prim, act, assigned_at in emp_rows
-        ]
-
-        response_list.append(
-            ClientResponse(
-                id=client.id,
-                company_name=client.company_name,
-                contact_person=client.contact_person,
-                email=client.email,
-                phone=client.phone,
-                status=client.status,
-                logo_url=client.logo_url,
-                is_active=client.is_active,
-                deactivated_at=client.deactivated_at,
-                archived_at=client.archived_at,
-                created_at=client.created_at,
-                assigned_employees=assigned_emps,
-                total_requirements=req_total,
-                active_requirements=req_active,
-                total_resumes=resumes_count,
-                total_applications=apps_count,
-            )
         )
+
+    # Pre-fetch 2: Total Requirements count in 1 query
+    req_total_map = dict(
+        (await db.execute(
+            select(Requirement.client_id, func.count(Requirement.id))
+            .where(Requirement.client_id.in_(client_ids))
+            .group_by(Requirement.client_id)
+        )).all()
+    )
+
+    # Pre-fetch 3: Active Requirements count in 1 query
+    req_active_map = dict(
+        (await db.execute(
+            select(Requirement.client_id, func.count(Requirement.id))
+            .where(Requirement.client_id.in_(client_ids), Requirement.status == "active")
+            .group_by(Requirement.client_id)
+        )).all()
+    )
+
+    # Pre-fetch 4: Total Resumes count in 1 query
+    resumes_count_map = dict(
+        (await db.execute(
+            select(Resume.client_id, func.count(Resume.id))
+            .where(Resume.client_id.in_(client_ids))
+            .group_by(Resume.client_id)
+        )).all()
+    )
+
+    # Pre-fetch 5: Total Applications count in 1 query
+    apps_count_map = dict(
+        (await db.execute(
+            select(Application.client_id, func.count(Application.id))
+            .where(Application.client_id.in_(client_ids))
+            .group_by(Application.client_id)
+        )).all()
+    )
+
+    response_list = [
+        ClientResponse(
+            id=client.id,
+            company_name=client.company_name,
+            contact_person=client.contact_person,
+            email=client.email,
+            phone=client.phone,
+            status=client.status,
+            logo_url=client.logo_url,
+            is_active=client.is_active,
+            deactivated_at=client.deactivated_at,
+            archived_at=client.archived_at,
+            created_at=client.created_at,
+            assigned_employees=emp_map.get(client.id, []),
+            total_requirements=req_total_map.get(client.id, 0),
+            active_requirements=req_active_map.get(client.id, 0),
+            total_resumes=resumes_count_map.get(client.id, 0),
+            total_applications=apps_count_map.get(client.id, 0),
+        )
+        for client in clients
+    ]
 
     return response_list
 

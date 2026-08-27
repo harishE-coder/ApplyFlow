@@ -58,13 +58,6 @@ export function EmployeeDashboard() {
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
-  // Fetch assigned clients
-  useEffect(() => {
-    api.get('/clients').then((res) => {
-      setAssignedClients(res.data || []);
-    }).catch(() => {});
-  }, []);
-
   // Fetch employee dashboard data
   const fetchData = async () => {
     setLoading(true);
@@ -78,13 +71,17 @@ export function EmployeeDashboard() {
         params.date_range = dateRange;
       }
 
-      const [dashRes, attRes] = await Promise.all([
-        api.get('/dashboard/employee', { params }),
+      const results = await Promise.allSettled([
+        api.get('/dashboard/employee/home', { params }),
         api.get('/attendance/status'),
       ]);
 
-      setData(dashRes.data);
-      setAttendance(attRes.data);
+      if (results[0].status === 'fulfilled') {
+        const home = results[0].value.data;
+        if (home?.dashboard) setData(home.dashboard);
+        if (home?.assigned_clients?.length) setAssignedClients(home.assigned_clients);
+      }
+      if (results[1].status === 'fulfilled') setAttendance(results[1].value.data);
     } catch (err) {
       toastError('Dashboard Error', 'Failed to load recruiter telemetry');
     } finally {

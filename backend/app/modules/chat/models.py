@@ -7,7 +7,7 @@ Read tracking uses a cursor (last read message per user per room).
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -40,6 +40,9 @@ class ChatRoom(Base):
 class ChatMessage(Base):
     """Individual chat message within a room."""
     __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("ix_chat_messages_room_created", "room_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     room_id: Mapped[uuid.UUID] = mapped_column(

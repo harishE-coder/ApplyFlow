@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from datetime import date, datetime, timezone
 from sqlalchemy import select, delete, func, and_, or_, update
@@ -129,34 +130,37 @@ async def get_users(
     result = await db.execute(query)
     users = result.scalars().all()
 
-    response_list = []
-    for u in users:
-        assigned = []
-        if u.role == "employee":
-            client_query = (
-                select(Client)
-                .join(EmployeeClient, EmployeeClient.client_id == Client.id)
-                .where(EmployeeClient.employee_id == u.id, EmployeeClient.active == True)  # noqa: E712
-            )
-            client_res = await db.execute(client_query)
-            clients = client_res.scalars().all()
-            assigned = [AssignedClientInfo(id=c.id, company_name=c.company_name) for c in clients]
+    if not users:
+        return []
 
-        response_list.append(
-            UserDetailResponse(
-                id=u.id,
-                name=u.name,
-                email=u.email,
-                phone=u.phone,
-                role=u.role,
-                status=u.status,
-                client_id=u.client_id,
-                managed_by=u.managed_by,
-                is_active=u.is_active,
-                created_at=u.created_at,
-                assigned_clients=assigned,
-            )
+    emp_ids = [u.id for u in users if u.role == "employee"]
+    emp_clients_map = {}
+    if emp_ids:
+        client_query = (
+            select(EmployeeClient.employee_id, Client.id, Client.company_name)
+            .join(Client, EmployeeClient.client_id == Client.id)
+            .where(EmployeeClient.employee_id.in_(emp_ids), EmployeeClient.active == True)  # noqa: E712
         )
+        client_res = await db.execute(client_query)
+        for emp_id, cid, cname in client_res.all():
+            emp_clients_map.setdefault(emp_id, []).append(AssignedClientInfo(id=cid, company_name=cname))
+
+    response_list = [
+        UserDetailResponse(
+            id=u.id,
+            name=u.name,
+            email=u.email,
+            phone=u.phone,
+            role=u.role,
+            status=u.status,
+            client_id=u.client_id,
+            managed_by=u.managed_by,
+            is_active=u.is_active,
+            created_at=u.created_at,
+            assigned_clients=emp_clients_map.get(u.id, []),
+        )
+        for u in users
+    ]
     return response_list
 
 
@@ -449,7 +453,23 @@ async def get_employee_performance_list(
     db: AsyncSession, current_user: User, status_filter: str | None = None
 ) -> list[EmployeePerformance]:
     """Get list of employees with real-time performance telemetry scoped by user role."""
-    query = select(User).where(User.role == "employee").order_by(User.name)
+    today_date = date.today()
+
+    query = (
+        select(
+            User.id,
+            User.name,
+            User.email,
+            User.phone,
+            User.status,
+            User.is_active,
+            func.coalesce(select(func.count(Resume.id)).where(Resume.uploaded_by == User.id).correlate(User).scalar_subquery(), 0).label("total_uploads"),
+            func.coalesce(select(func.count(Application.id)).where(Application.employee_id == User.id).correlate(User).scalar_subquery(), 0).label("total_apps"),
+            func.coalesce(select(func.sum(Target.daily_target)).where(Target.employee_id == User.id, Target.effective_date <= today_date, Target.status == "active").correlate(User).scalar_subquery(), 25).label("daily_target"),
+        )
+        .where(User.role == "employee")
+        .order_by(User.name)
+    )
 
     if status_filter and status_filter != "all":
         query = query.where(User.status == status_filter)
@@ -463,42 +483,30 @@ async def get_employee_performance_list(
         query = query.where(User.id == current_user.id)
 
     result = await db.execute(query)
-    employees = result.scalars().all()
+    employees = result.all()
 
-    today_date = date.today()
+    if not employees:
+        return []
+
+    emp_ids = [e.id for e in employees]
+
+    # Pre-fetch assigned clients in 1 fast indexed query
+    client_query = (
+        select(EmployeeClient.employee_id, Client.id, Client.company_name)
+        .join(Client, EmployeeClient.client_id == Client.id)
+        .where(EmployeeClient.employee_id.in_(emp_ids), EmployeeClient.active == True)  # noqa: E712
+    )
+    client_res = await db.execute(client_query)
+    emp_clients_map = {}
+    for eid, cid, cname in client_res.all():
+        emp_clients_map.setdefault(eid, []).append(AssignedClientInfo(id=cid, company_name=cname))
+
     response = []
-
     for emp in employees:
-        # Fetch assigned clients
-        client_query = (
-            select(Client)
-            .join(EmployeeClient, EmployeeClient.client_id == Client.id)
-            .where(EmployeeClient.employee_id == emp.id, EmployeeClient.active == True)  # noqa: E712
-        )
-        client_res = await db.execute(client_query)
-        clients = client_res.scalars().all()
-        assigned = [AssignedClientInfo(id=c.id, company_name=c.company_name) for c in clients]
-
-        # Total Uploads
-        total_uploads_res = await db.execute(
-            select(func.count(Resume.id)).where(Resume.uploaded_by == emp.id)
-        )
-        total_uploads = total_uploads_res.scalar() or 0
-
-        # Total Applications
-        total_apps_res = await db.execute(
-            select(func.count(Application.id)).where(Application.employee_id == emp.id)
-        )
-        total_apps = total_apps_res.scalar() or 0
-
-        # Daily Target
-        target_res = await db.execute(
-            select(func.sum(Target.daily_target)).where(
-                Target.employee_id == emp.id,
-                Target.effective_date <= today_date,
-            )
-        )
-        daily_target = target_res.scalar() or 25
+        assigned = emp_clients_map.get(emp.id, [])
+        total_uploads = emp.total_uploads or 0
+        total_apps = emp.total_apps or 0
+        daily_target = emp.daily_target or 25
 
         completion_pct = 0.0
         if daily_target > 0:
@@ -538,24 +546,45 @@ async def get_sub_admins(db: AsyncSession, status_filter: str | None = None) -> 
     result = await db.execute(query)
     sub_admins = result.scalars().all()
 
+    if not sub_admins:
+        return []
+
+    sa_ids = [sa.id for sa in sub_admins]
+
+    # Pre-fetch 1: all client assignments in 1 query
+    sa_clients_res = await db.execute(
+        select(SubAdminAssignment.sub_admin_id, Client.id, Client.company_name)
+        .join(Client, SubAdminAssignment.client_id == Client.id)
+        .where(
+            SubAdminAssignment.sub_admin_id.in_(sa_ids),
+            SubAdminAssignment.client_id.is_not(None),
+            SubAdminAssignment.active == True,  # noqa: E712
+            Client.is_active == True,  # noqa: E712
+        )
+    )
+    sa_clients_map = {}
+    for said, cid, cname in sa_clients_res.all():
+        sa_clients_map.setdefault(said, []).append(AssignedClientInfo(id=cid, company_name=cname))
+
+    # Pre-fetch 2: all employee assignments in 1 query
+    sa_emps_res = await db.execute(
+        select(SubAdminAssignment.sub_admin_id, User.id, User.name, User.email)
+        .join(User, SubAdminAssignment.employee_id == User.id)
+        .where(
+            SubAdminAssignment.sub_admin_id.in_(sa_ids),
+            SubAdminAssignment.employee_id.is_not(None),
+            SubAdminAssignment.active == True,  # noqa: E712
+            User.is_active == True,  # noqa: E712
+        )
+    )
+    sa_emps_map = {}
+    for said, eid, ename, eemail in sa_emps_res.all():
+        sa_emps_map.setdefault(said, []).append(AssignedEmployeeInfo(id=eid, name=ename, email=eemail))
+
     out = []
     for sa in sub_admins:
-        client_ids = await get_sub_admin_client_ids(db, sa.id)
-        employee_ids = await get_sub_admin_employee_ids(db, sa.id)
-
-        assigned_clients = []
-        if client_ids:
-            c_rows = (await db.execute(
-                select(Client).where(Client.id.in_(client_ids), Client.is_active == True)  # noqa: E712
-            )).scalars().all()
-            assigned_clients = [AssignedClientInfo(id=c.id, company_name=c.company_name) for c in c_rows]
-
-        assigned_employees = []
-        if employee_ids:
-            e_rows = (await db.execute(
-                select(User).where(User.id.in_(employee_ids), User.is_active == True)  # noqa: E712
-            )).scalars().all()
-            assigned_employees = [AssignedEmployeeInfo(id=e.id, name=e.name, email=e.email) for e in e_rows]
+        assigned_clients = sa_clients_map.get(sa.id, [])
+        assigned_employees = sa_emps_map.get(sa.id, [])
 
         out.append(SubAdminResponse(
             id=sa.id,
@@ -642,7 +671,7 @@ async def get_sub_admin_assignment_details(db: AsyncSession, sub_admin_id: uuid.
     all_emps = (await db.execute(
         select(User).where(User.role == "employee", User.is_active == True).order_by(User.name)  # noqa: E712
     )).scalars().all()
-    available_employees = [AssignedEmployeeInfo(id=e.id, name=e.name, email=e.email) for e in e_rows if False] or [AssignedEmployeeInfo(id=e.id, name=e.name, email=e.email) for e in all_emps]
+    available_employees = [AssignedEmployeeInfo(id=e.id, name=e.name, email=e.email) for e in all_emps]
 
     return SubAdminAssignmentDetails(
         sub_admin_id=sub_admin_id,

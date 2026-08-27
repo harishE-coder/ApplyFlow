@@ -7,7 +7,7 @@ Each client can have multiple job requirements for different companies.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, Index, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -43,13 +43,13 @@ class Client(Base):
 
     # Relationships
     client_users: Mapped[list["User"]] = relationship(  # noqa: F821
-        back_populates="client", lazy="selectin", foreign_keys="User.client_id"
+        back_populates="client", lazy="select", foreign_keys="User.client_id"
     )
     employee_assignments: Mapped[list["EmployeeClient"]] = relationship(
-        back_populates="client", lazy="selectin", foreign_keys="EmployeeClient.client_id"
+        back_populates="client", lazy="select", foreign_keys="EmployeeClient.client_id"
     )
     requirements: Mapped[list["Requirement"]] = relationship(  # noqa: F821
-        back_populates="client", lazy="selectin"
+        back_populates="client", lazy="select"
     )
 
     def __repr__(self) -> str:
@@ -64,6 +64,8 @@ class EmployeeClient(Base):
         UniqueConstraint(
             "employee_id", "client_id", name="uq_employee_client"
         ),
+        Index("ix_emp_client_active", "client_id", "active"),
+        Index("ix_emp_client_emp_active", "employee_id", "active"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -92,10 +94,10 @@ class EmployeeClient(Base):
 
     # Relationships
     employee: Mapped["User"] = relationship(  # noqa: F821
-        back_populates="employee_assignments", lazy="selectin", foreign_keys=[employee_id]
+        back_populates="employee_assignments", lazy="select", foreign_keys=[employee_id]
     )
     client: Mapped["Client"] = relationship(
-        back_populates="employee_assignments", lazy="selectin", foreign_keys=[client_id]
+        back_populates="employee_assignments", lazy="select", foreign_keys=[client_id]
     )
 
     def __repr__(self) -> str:

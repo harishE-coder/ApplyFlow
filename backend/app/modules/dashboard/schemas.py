@@ -1,5 +1,6 @@
 import uuid
 from pydantic import BaseModel
+from app.modules.attendance.schemas import AdminAttendanceSummary
 
 
 class ChartPoint(BaseModel):
@@ -139,3 +140,36 @@ class ClientDashboardResponse(BaseModel):
     total_resumes: int = 0
     applications_sent: int = 0
     active_requirements_count: int = 0
+
+
+class AdminHomeResponse(BaseModel):
+    overview: AdminOverviewMetrics
+    team_performance: list[dict] = []
+    attendance_summary: AdminAttendanceSummary | dict | None = None
+    client_cards: list[AdminClientCard] = []
+    clients: list[dict] = []
+    all_employees: list[dict] = []
+    all_targets: list[dict] = []
+
+
+class EmployeeHomeResponse(BaseModel):
+    dashboard: EmployeeDashboardResponse
+    assigned_clients: list[dict] = []
+    notifications: list[dict] = []
+
+
+class ClientHomeResponse(BaseModel):
+    dashboard: ClientDashboardResponse
+    chat_room_id: uuid.UUID | None = None
+
+
+class PerformanceStatsResponse(BaseModel):
+    timestamp: str
+    database_connected: bool
+    db_engine: str
+    total_resumes: int
+    total_applications: int
+    total_users: int
+    total_clients: int
+    total_targets: int
+    cache_status: str = "Active"

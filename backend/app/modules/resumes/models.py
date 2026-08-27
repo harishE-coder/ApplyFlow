@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -9,6 +9,11 @@ from app.core.database import Base
 
 class Resume(Base):
     __tablename__ = "resumes"
+    __table_args__ = (
+        Index("ix_resumes_client_date", "client_id", "resume_date"),
+        Index("ix_resumes_uploader_date", "uploaded_by", "resume_date"),
+        Index("ix_resumes_client_comp", "client_id", "company"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4

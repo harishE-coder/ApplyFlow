@@ -11,12 +11,67 @@ from app.modules.dashboard.schemas import (
     EmployeeDashboardResponse,
     ClientDashboardResponse,
     TargetSummary,
+    AdminHomeResponse,
+    EmployeeHomeResponse,
+    ClientHomeResponse,
+    PerformanceStatsResponse,
 )
 from app.modules.dashboard import service
 from app.modules.users.service import get_employee_performance_list
 from sqlalchemy import select
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+@router.get("/admin/home", response_model=AdminHomeResponse, dependencies=[Depends(require_role("admin", "sub_admin"))])
+async def get_admin_dashboard_home_endpoint(
+    client_id: uuid.UUID | None = Query(None, description="Filter by Service Client ID"),
+    employee_id: uuid.UUID | None = Query(None, description="Filter by Employee ID"),
+    date_range: str | None = Query("today", description="Filter by date range"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consolidated Super Admin & Sub-Admin Dashboard Home: returns all metrics, cards, charts, and metadata in 1 roundtrip."""
+    effective_range = custom_date or date_filter or date_range or "today"
+    return await service.get_admin_dashboard_home(
+        db, current_user=current_user, client_id=client_id, employee_id=employee_id, date_range=effective_range, custom_date=custom_date
+    )
+
+
+@router.get("/employee/home", response_model=EmployeeHomeResponse)
+async def get_employee_dashboard_home_endpoint(
+    client_id: uuid.UUID | None = Query(None, description="Filter by assigned Service Client ID"),
+    date_range: str | None = Query("today", description="Filter by date range"),
+    date_filter: str | None = Query(None, description="Alias for date range"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consolidated Recruiter / Employee Dashboard Home in 1 roundtrip."""
+    effective_range = custom_date or date_filter or date_range or "today"
+    return await service.get_employee_dashboard_home(
+        db, current_user=current_user, client_id=client_id, date_range=effective_range, custom_date=custom_date
+    )
+
+
+@router.get("/client/home", response_model=ClientHomeResponse)
+async def get_client_dashboard_home_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Consolidated Client Portal Dashboard Home in 1 roundtrip."""
+    return await service.get_client_dashboard_home(db, current_user=current_user)
+
+
+@router.get("/performance", response_model=PerformanceStatsResponse)
+async def get_performance_stats_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Real-time architecture and database telemetry diagnostics."""
+    return await service.get_dashboard_performance_metrics(db)
 
 
 @router.get("/admin/overview", response_model=AdminOverviewMetrics, dependencies=[Depends(require_role("admin", "sub_admin"))])

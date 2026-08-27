@@ -97,15 +97,10 @@ export function ApplicationsPage() {
   const handleUpdateStatus = async (appId, newStatus) => {
     setUpdatingStatus(true);
     try {
-      // Backend expects 'applied', 'submitted', or 'closed' for status update endpoint
-      const validStatus = ['applied', 'submitted', 'closed'].includes(newStatus)
-        ? newStatus
-        : 'submitted';
-
-      await api.put(`/applications/${appId}/status`, { status: validStatus });
+      await api.put(`/applications/${appId}/status`, { status: newStatus });
       success('Status Updated', `Application moved to ${newStatus}`);
 
-      window.dispatchEvent(new CustomEvent('application-updated', { detail: { appId, status: validStatus } }));
+      window.dispatchEvent(new CustomEvent('application-updated', { detail: { appId, status: newStatus } }));
 
       // Optimistic update
       setApplications((prev) =>

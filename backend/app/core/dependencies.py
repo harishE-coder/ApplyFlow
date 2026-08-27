@@ -13,18 +13,33 @@ from app.core.database import get_db
 from app.core.security import decode_token
 
 
+import time
+
+_user_cache: dict[str, tuple[float, any]] = {}
+
+def invalidate_user_cache(user_id: UUID | str):
+    """Invalidate cached user when updated."""
+    _user_cache.pop(str(user_id), None)
+
+
 async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
     Extract and validate the access token from HTTP-only cookie.
-    Returns the User ORM object.
+    Returns the User ORM object with short-lived memory caching to prevent
+    redundant database round-trips on concurrent frontend component requests.
     """
     # Import here to avoid circular imports
     from app.modules.users.models import User
 
     token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -45,17 +60,24 @@ async def get_current_user(
             detail="Invalid token payload",
         )
 
+    now = time.time()
+    cached = _user_cache.get(user_id)
+    if cached and (now - cached[0] < 30.0):
+        return cached[1]
+
     result = await db.execute(
         select(User).where(User.id == UUID(user_id), User.is_active == True)  # noqa: E712
     )
     user = result.scalar_one_or_none()
 
     if not user:
+        _user_cache.pop(user_id, None)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
 
+    _user_cache[user_id] = (now, user)
     return user
 
 

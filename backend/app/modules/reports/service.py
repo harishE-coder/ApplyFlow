@@ -27,17 +27,27 @@ async def generate_excel_report(
         allowed_client_ids = await get_sub_admin_client_ids(db, current_user.id)
         allowed_employee_ids = await get_sub_admin_employee_ids(db, current_user.id)
 
-    # 1. Fetch Requirements
+    # 1. Fetch Requirements with batch counts
     req_query = select(Requirement, Client.company_name).join(Client, Requirement.client_id == Client.id)
     if allowed_client_ids is not None:
         req_query = req_query.where(Requirement.client_id.in_(allowed_client_ids))
     if client_id:
         req_query = req_query.where(Requirement.client_id == client_id)
     reqs_res = await db.execute(req_query)
+    raw_reqs = reqs_res.all()
+
+    # Pre-fetch counts in single queries
+    res_counts_map = dict((await db.execute(
+        select(Resume.requirement_id, func.count(Resume.id)).where(Resume.requirement_id.is_not(None)).group_by(Resume.requirement_id)
+    )).all())
+    app_counts_map = dict((await db.execute(
+        select(Application.requirement_id, func.count(Application.id)).where(Application.requirement_id.is_not(None)).group_by(Application.requirement_id)
+    )).all())
+
     reqs_data = []
-    for r, client_name in reqs_res.all():
-        res_count = (await db.execute(select(func.count(Resume.id)).where(Resume.requirement_id == r.id))).scalar() or 0
-        app_count = (await db.execute(select(func.count(Application.id)).where(Application.requirement_id == r.id))).scalar() or 0
+    for r, client_name in raw_reqs:
+        res_count = res_counts_map.get(r.id, 0)
+        app_count = app_counts_map.get(r.id, 0)
         reqs_data.append({
             "Requirement Code": r.role_code,
             "Client Customer": client_name,
@@ -84,9 +94,9 @@ async def generate_excel_report(
     # 3. Fetch Applications
     a_query = (
         select(Application, Resume, Client.company_name, User.name, Requirement.role_code)
-        .join(Resume, Application.resume_id == Resume.id)
-        .join(Client, Application.client_id == Client.id)
-        .join(User, Application.employee_id == User.id)
+        .outerjoin(Resume, Application.resume_id == Resume.id)
+        .outerjoin(Client, Application.client_id == Client.id)
+        .outerjoin(User, Application.employee_id == User.id)
         .outerjoin(Requirement, Application.requirement_id == Requirement.id)
     )
     if allowed_client_ids is not None:
@@ -102,14 +112,14 @@ async def generate_excel_report(
     apps_data = [
         {
             "Application ID": str(app.id)[:8],
-            "Resume ID": resume.display_id,
-            "Candidate Name": resume.candidate_name,
-            "Target Company": resume.company,
-            "Role": resume.role,
+            "Resume ID": resume.display_id if resume else "N/A",
+            "Candidate Name": resume.candidate_name if resume else (app.candidate_name or "N/A"),
+            "Target Company": resume.company if resume else (app.company or "N/A"),
+            "Role": resume.role if resume else (app.role or "N/A"),
             "Requirement Code": req_code or "N/A",
-            "Client Customer": client_name,
-            "Submitted By": emp_name,
-            "Status": app.status.capitalize(),
+            "Client Customer": client_name or "N/A",
+            "Submitted By": emp_name or "N/A",
+            "Status": (app.status or "Submitted").capitalize(),
             "Applied Date": app.applied_date.strftime("%Y-%m-%d %H:%M") if app.applied_date else "",
         }
         for app, resume, client_name, emp_name, req_code in apps_res.all()
@@ -190,9 +200,9 @@ async def generate_pdf_report(
     # Applications table
     a_query = (
         select(Application, Resume, Client.company_name, User.name, Requirement.role_code)
-        .join(Resume, Application.resume_id == Resume.id)
-        .join(Client, Application.client_id == Client.id)
-        .join(User, Application.employee_id == User.id)
+        .outerjoin(Resume, Application.resume_id == Resume.id)
+        .outerjoin(Client, Application.client_id == Client.id)
+        .outerjoin(User, Application.employee_id == User.id)
         .outerjoin(Requirement, Application.requirement_id == Requirement.id)
         .order_by(Application.applied_date.desc())
         .limit(20)
@@ -213,14 +223,18 @@ async def generate_pdf_report(
 
     table_data = [["ID", "Candidate", "Company", "Role", "Req Code", "Client", "Status"]]
     for app, resume, c_name, u_name, req_code in rows:
+        disp_id = resume.display_id if resume else str(app.id)[:8]
+        cand_name = (resume.candidate_name if resume else (app.candidate_name or "N/A"))[:16]
+        comp = (resume.company if resume else (app.company or "N/A"))[:10]
+        role_str = (resume.role if resume else (app.role or "N/A"))[:14]
         table_data.append([
-            resume.display_id,
-            resume.candidate_name[:16],
-            resume.company[:10],
-            resume.role[:14],
+            disp_id,
+            cand_name,
+            comp,
+            role_str,
             req_code or "N/A",
-            c_name[:12],
-            app.status.capitalize(),
+            (c_name or "N/A")[:12],
+            (app.status or "Submitted").capitalize(),
         ])
 
     if len(table_data) == 1:

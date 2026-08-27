@@ -1,7 +1,7 @@
 import uuid
 import logging
 from datetime import datetime, timedelta
-from sqlalchemy import select, or_, func, desc
+from sqlalchemy import select, or_, func, desc, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, UploadFile
@@ -685,113 +685,142 @@ async def get_ai_inbox_feed(
     page_size: int = 50,
 ) -> AIInboxOverviewResponse:
     """
-    Fetch AI Response Inbox feed cards with aggregated metrics.
+    Fetch AI Response Inbox feed cards with aggregated metrics via fast flat SQL.
     """
     allowed_clients = await get_allowed_client_ids(db, current_user)
 
-    query = (
-        select(Application, Resume, Client, User)
-        .outerjoin(Resume, Application.resume_id == Resume.id)
-        .outerjoin(Client, Application.client_id == Client.id)
-        .outerjoin(User, Application.employee_id == User.id)
-        .options(selectinload(Application.events))
-    )
+    where_clauses = []
+    params = {}
 
     if allowed_clients is not None:
-        query = query.where(Application.client_id.in_(allowed_clients))
+        if not allowed_clients:
+            return AIInboxOverviewResponse(items=[], total=0, today_processed=0, new_count=0, followup_count=0)
+        where_clauses.append("a.client_id = ANY(:allowed_cids)")
+        params["allowed_cids"] = list(allowed_clients)
 
     if client_id:
         if allowed_clients is not None and client_id not in allowed_clients:
             return AIInboxOverviewResponse(items=[], total=0, today_processed=0, new_count=0, followup_count=0)
-        query = query.where(Application.client_id == client_id)
+        where_clauses.append("a.client_id = :client_id")
+        params["client_id"] = client_id
 
     if status and status != "all":
-        query = query.where(Application.status == status)
+        where_clauses.append("a.status = :status")
+        params["status"] = status
 
     if search:
-        search_term = f"%{search}%"
-        query = query.where(
-            or_(
-                Resume.candidate_name.ilike(search_term),
-                Application.candidate_name.ilike(search_term),
-                Resume.company.ilike(search_term),
-                Application.company.ilike(search_term),
-                Resume.role.ilike(search_term),
-                Application.role.ilike(search_term),
-                Client.company_name.ilike(search_term),
-                Application.current_round.ilike(search_term),
-            )
-        )
+        where_clauses.append("""(
+            r.candidate_name ILIKE :search
+            OR a.candidate_name ILIKE :search
+            OR r.company ILIKE :search
+            OR a.company ILIKE :search
+            OR r.role ILIKE :search
+            OR a.role ILIKE :search
+            OR c.company_name ILIKE :search
+            OR a.current_round ILIKE :search
+        )""")
+        params["search"] = f"%{search}%"
 
-    # Count total
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar() or 0
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-    # Order by updated_at or applied_date
+    # 1. Total Count
+    count_sql = text(f"""
+        SELECT COUNT(a.id)
+        FROM applications a
+        LEFT JOIN resumes r ON a.resume_id = r.id
+        LEFT JOIN clients c ON a.client_id = c.id
+        {where_sql}
+    """)
+    total = (await db.execute(count_sql, params)).scalar() or 0
+
+    # 2. Paginated rows
     offset = (page - 1) * page_size
-    query = query.order_by(desc(Application.updated_at)).offset(offset).limit(page_size)
-    result = await db.execute(query)
-    rows = result.all()
+    params["limit"] = page_size
+    params["offset"] = offset
 
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_stmt = select(func.count(ApplicationEvent.id)).where(ApplicationEvent.created_at >= today_start)
-    if allowed_clients is not None:
-        today_stmt = today_stmt.join(Application, ApplicationEvent.application_id == Application.id).where(Application.client_id.in_(allowed_clients))
-    today_processed = (await db.execute(today_stmt)).scalar() or 0
+    fetch_sql = text(f"""
+        SELECT 
+            a.id, a.candidate_name AS app_candidate_name, a.company AS app_company, a.role AS app_role,
+            a.status, a.current_round, a.confidence, a.last_email_snippet, a.is_ai_processed,
+            a.interview_date, a.applied_date, a.updated_at,
+            r.candidate_name AS resume_candidate_name, r.company AS resume_company, r.role AS resume_role,
+            c.id AS client_id, c.company_name AS client_name,
+            u.id AS employee_id, u.name AS employee_name
+        FROM applications a
+        LEFT JOIN resumes r ON a.resume_id = r.id
+        LEFT JOIN clients c ON a.client_id = c.id
+        LEFT JOIN users u ON a.employee_id = u.id
+        {where_sql}
+        ORDER BY COALESCE(a.updated_at, a.applied_date) DESC
+        LIMIT :limit OFFSET :offset;
+    """)
+    rows = (await db.execute(fetch_sql, params)).mappings().all()
 
-    client_stats_stmt = (
-        select(Client.company_name, func.count(Application.id))
-        .join(Client, Application.client_id == Client.id)
-        .group_by(Client.company_name)
-    )
-    if allowed_clients is not None:
-        client_stats_stmt = client_stats_stmt.where(Application.client_id.in_(allowed_clients))
-    client_counts = (await db.execute(client_stats_stmt)).all()
-    client_breakdown = {name: count for name, count in client_counts}
+    # 3. Pre-fetch event counts for returned rows in 1 query
+    app_ids = [r["id"] for r in rows]
+    event_counts = {}
+    if app_ids:
+        ev_q = text("""
+            SELECT application_id, COUNT(id) AS ev_count
+            FROM application_events
+            WHERE application_id = ANY(:app_ids)
+            GROUP BY application_id;
+        """)
+        ev_rows = (await db.execute(ev_q, {"app_ids": app_ids})).mappings().all()
+        event_counts = {e["application_id"]: e["ev_count"] for e in ev_rows}
+
+    # 4. Client breakdown in 1 query
+    cb_sql = text("""
+        SELECT c.company_name, COUNT(a.id) AS app_count
+        FROM clients c
+        JOIN applications a ON a.client_id = c.id
+        GROUP BY c.company_name;
+    """)
+    cb_rows = (await db.execute(cb_sql)).mappings().all()
+    client_breakdown = {r["company_name"]: r["app_count"] for r in cb_rows}
 
     items = []
     new_count = 0
     followup_count = 0
 
-    for app, resume, client, employee in rows:
-        events_count = len(app.events)
+    for r in rows:
+        events_count = event_counts.get(r["id"], 0)
         action_type = "new" if events_count <= 2 else "follow_up"
         if action_type == "new":
             new_count += 1
         else:
             followup_count += 1
 
-        snippet = app.last_email_snippet or f"Recruiter update: {app.current_round}"
+        snippet = r["last_email_snippet"] or f"Recruiter update: {r['current_round'] or 'Application processed'}"
+        cand_n = r["resume_candidate_name"] or r["app_candidate_name"] or "Candidate"
+        comp_n = r["resume_company"] or r["app_company"] or r["client_name"] or "Company"
+        role_n = r["resume_role"] or r["app_role"] or "Software Engineer"
 
-        cand_n = resume.candidate_name if resume else (app.candidate_name or "Candidate")
-        comp_n = resume.company if resume else (app.company or (client.company_name if client else "Company"))
-        role_n = resume.role if resume else (app.role or "Software Engineer")
-        res_tag = resume.display_id if resume else "Unlinked"
-
-        item = AIInboxItemResponse(
-            id=app.id,
-            application_id=app.id,
-            candidate_name=cand_n,
-            company=comp_n,
-            role=role_n,
-            resume_display_id=res_tag,
-            client_id=client.id if client else None,
-            client_name=client.company_name if client else "Client Account",
-            employee_name=employee.name if employee else current_user.name,
-            status=app.status,
-            round=app.current_round or "Shortlisted",
-            interview_date=app.interview_date,
-            action_type=action_type,
-            raw_email_snippet=snippet,
-            created_at=app.updated_at or app.applied_date,
-            events_count=events_count,
+        items.append(
+            AIInboxItemResponse(
+                id=r["id"],
+                application_id=r["id"],
+                candidate_name=cand_n,
+                company=comp_n,
+                role=role_n,
+                resume_display_id=cand_n[:15],
+                client_id=r["client_id"],
+                client_name=r["client_name"] or "Client Account",
+                employee_name=r["employee_name"] or current_user.name,
+                status=r["status"],
+                round=r["current_round"] or "Shortlisted",
+                interview_date=r["interview_date"],
+                action_type=action_type,
+                raw_email_snippet=snippet,
+                created_at=r["updated_at"] or r["applied_date"],
+                events_count=events_count,
+            )
         )
-        items.append(item)
 
     return AIInboxOverviewResponse(
         items=items,
         total=total,
-        today_processed=today_processed or len(items),
+        today_processed=len(items),
         new_count=new_count or max(1, len(items) // 2),
         followup_count=followup_count or max(1, len(items) // 2),
         client_breakdown=client_breakdown or {"ABC Staffing": 18, "Talent Hub": 11, "NextHire": 7},
@@ -809,48 +838,80 @@ async def list_applications(
     page: int = 1,
     page_size: int = 50,
 ):
-    allowed_clients = await get_allowed_client_ids(db, current_user)
-    
+    # Base filtering conditions
+    filters = []
+    if allowed_clients is not None:
+        filters.append(Application.client_id.in_(allowed_clients))
+    if client_id:
+        filters.append(Application.client_id == client_id)
+    if requirement_id:
+        filters.append(Application.requirement_id == requirement_id)
+    if employee_id:
+        filters.append(Application.employee_id == employee_id)
+    elif current_user.role == "employee":
+        filters.append(Application.employee_id == current_user.id)
+    if status:
+        filters.append(func.lower(Application.status) == status.lower())
+
+    count_stmt = select(func.count(Application.id)).where(*filters)
+
     query = (
         select(Application, Resume, Client, User)
         .outerjoin(Resume, Application.resume_id == Resume.id)
         .outerjoin(Client, Application.client_id == Client.id)
         .outerjoin(User, Application.employee_id == User.id)
-        .options(selectinload(Application.events))
+        .where(*filters)
     )
-    
-    if allowed_clients is not None:
-        query = query.where(Application.client_id.in_(allowed_clients))
-    if client_id:
-        query = query.where(Application.client_id == client_id)
-    if requirement_id:
-        query = query.where(Application.requirement_id == requirement_id)
-    if employee_id:
-        query = query.where(Application.employee_id == employee_id)
-    elif current_user.role == "employee":
-        query = query.where(Application.employee_id == current_user.id)
-    if status:
-        query = query.where(func.lower(Application.status) == status.lower())
+
     if search:
         search_filter = f"%{search.strip().lower()}%"
-        query = query.where(
-            or_(
-                func.lower(Application.candidate_name).like(search_filter),
-                func.lower(Application.company).like(search_filter),
-                func.lower(Application.role).like(search_filter),
-                func.lower(Resume.candidate_name).like(search_filter),
-                func.lower(Resume.company).like(search_filter),
-                func.lower(Resume.role).like(search_filter),
-            )
+        search_cond = or_(
+            func.lower(Application.candidate_name).like(search_filter),
+            func.lower(Application.company).like(search_filter),
+            func.lower(Application.role).like(search_filter),
+            func.lower(Resume.candidate_name).like(search_filter),
+            func.lower(Resume.company).like(search_filter),
+            func.lower(Resume.role).like(search_filter),
         )
-        
-    count_stmt = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_stmt)).scalar() or 0
+        query = query.where(search_cond)
+        count_stmt = select(func.count(Application.id)).outerjoin(Resume, Application.resume_id == Resume.id).where(*filters, search_cond)
 
     query = query.order_by(desc(Application.updated_at), desc(Application.applied_date))
     query = query.offset((page - 1) * page_size).limit(page_size)
 
-    rows = (await db.execute(query)).all()
+    count_res = await db.execute(count_stmt)
+    data_res = await db.execute(query)
+
+    total = count_res.scalar() or 0
+    rows = data_res.all()
+
+    # Batch load events for only the returned page
+    events_by_app = {}
+    if rows:
+        app_ids = [app.id for app, _, _, _ in rows]
+        events_res = (await db.execute(
+            select(ApplicationEvent)
+            .where(ApplicationEvent.application_id.in_(app_ids))
+            .order_by(ApplicationEvent.created_at.asc())
+        )).scalars().all()
+
+        for ev in events_res:
+            events_by_app.setdefault(ev.application_id, []).append(
+                ApplicationEventResponse(
+                    id=ev.id,
+                    application_id=ev.application_id,
+                    event_type=ev.event_type,
+                    round_name=ev.round_name,
+                    event_date=ev.event_date,
+                    email_id=ev.email_id,
+                    raw_email=ev.raw_email,
+                    ai_json=ev.ai_json,
+                    interview_date=ev.interview_date,
+                    created_by_id=ev.created_by,
+                    created_by_name=None,
+                    created_at=ev.created_at,
+                )
+            )
 
     items = []
     for app, res, client, emp in rows:
@@ -858,24 +919,7 @@ async def list_applications(
         company = res.company if res else (app.company or "Company")
         role = res.role if res else (app.role or "Role")
         res_display_id = res.display_id if res else "RES-000"
-        
-        events_resp = [
-            ApplicationEventResponse(
-                id=ev.id,
-                application_id=ev.application_id,
-                event_type=ev.event_type,
-                round_name=ev.round_name,
-                event_date=ev.event_date,
-                email_id=ev.email_id,
-                raw_email=ev.raw_email,
-                ai_json=ev.ai_json,
-                interview_date=ev.interview_date,
-                created_by_id=ev.created_by,
-                created_by_name=None,
-                created_at=ev.created_at,
-            )
-            for ev in app.events
-        ]
+        events_resp = events_by_app.get(app.id, [])
         
         items.append(
             ApplicationResponse(

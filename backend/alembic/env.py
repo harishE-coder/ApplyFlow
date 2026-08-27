@@ -3,7 +3,12 @@ Alembic environment configuration for async SQLAlchemy.
 """
 
 import asyncio
+import os
+import sys
 from logging.config import fileConfig
+
+# Add backend directory to sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from alembic import context
 from sqlalchemy import pool
@@ -14,12 +19,16 @@ from app.core.database import Base
 from app.core.config import settings
 
 # Import all models to register them with Base.metadata
-from app.modules.users.models import User  # noqa: F401
+from app.modules.users.models import User, SubAdminAssignment  # noqa: F401
 from app.modules.clients.models import Client, EmployeeClient  # noqa: F401
+from app.modules.requirements.models import Requirement  # noqa: F401
 from app.modules.resumes.models import Resume  # noqa: F401
-from app.modules.applications.models import Application  # noqa: F401
+from app.modules.applications.models import Application, ApplicationEvent  # noqa: F401
 from app.modules.targets.models import Target  # noqa: F401
 from app.modules.activity_logs.models import ActivityLog  # noqa: F401
+from app.modules.attendance.models import Attendance  # noqa: F401
+from app.modules.notifications.models import Notification  # noqa: F401
+from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead  # noqa: F401
 
 # Alembic Config object
 config = context.config

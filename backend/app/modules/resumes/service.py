@@ -1,6 +1,7 @@
+import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from sqlalchemy import select, or_, and_, func, distinct
+from sqlalchemy import select, or_, and_, func, distinct, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import UploadFile, HTTPException
 
@@ -8,17 +9,41 @@ from app.modules.users.models import User
 from app.modules.clients.models import Client, EmployeeClient
 from app.modules.requirements.models import Requirement
 from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
+from app.modules.applications.models import Application, ApplicationEvent
 from app.modules.activity_logs.models import ActivityLog
 from app.modules.resumes.parser import parse_resume_filename
 from app.modules.resumes.schemas import (
     ResumeResponse,
+    ResumeUpdate,
+    FindResumeMatchResponse,
     ParsedFileUploadItem,
     BulkUploadResponse,
     ConfirmManualUploadItem,
     UploadDashboardStats,
 )
 from app.services.google_drive import drive_service, UPLOAD_DIR
+
+
+def _parse_to_date(val) -> date | None:
+    """Safely convert any date/string input to datetime.date object."""
+    if val is None:
+        return None
+    if isinstance(val, date) and not isinstance(val, datetime):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return None
+        try:
+            return datetime.fromisoformat(val.replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                return datetime.strptime(val[:10], "%Y-%m-%d").date()
+            except Exception:
+                return None
+    return None
 
 
 async def get_allowed_client_ids(db: AsyncSession, current_user: User) -> list[uuid.UUID] | None:
@@ -146,7 +171,9 @@ async def search_resumes(
         query = query.where(Resume.resume_id_tag.ilike(f"%{resume_id_tag.strip()}%"))
 
     # Global Date Filtering on resume_date
-    target_d = custom_date or resume_date
+    target_d = _parse_to_date(custom_date) or _parse_to_date(resume_date)
+    s_date = _parse_to_date(start_date)
+    e_date = _parse_to_date(end_date)
     today_val = date.today()
 
     if date_filter in ("today", "Today"):
@@ -187,25 +214,25 @@ async def search_resumes(
                 func.date(Resume.upload_date) == target_d,
             )
         )
-    elif start_date and end_date:
+    elif s_date and e_date:
         query = query.where(
             or_(
-                (Resume.resume_date >= start_date) & (Resume.resume_date <= end_date),
-                (func.date(Resume.upload_date) >= start_date) & (func.date(Resume.upload_date) <= end_date),
+                (Resume.resume_date >= s_date) & (Resume.resume_date <= e_date),
+                (func.date(Resume.upload_date) >= s_date) & (func.date(Resume.upload_date) <= e_date),
             )
         )
-    elif start_date:
+    elif s_date:
         query = query.where(
             or_(
-                Resume.resume_date >= start_date,
-                func.date(Resume.upload_date) >= start_date,
+                Resume.resume_date >= s_date,
+                func.date(Resume.upload_date) >= s_date,
             )
         )
-    elif end_date:
+    elif e_date:
         query = query.where(
             or_(
-                Resume.resume_date <= end_date,
-                func.date(Resume.upload_date) <= end_date,
+                Resume.resume_date <= e_date,
+                func.date(Resume.upload_date) <= e_date,
             )
         )
 
@@ -223,14 +250,15 @@ async def search_resumes(
             )
         )
 
-    # Count
+    # Count & Paginate in parallel
     count_query = select(func.count()).select_from(query.subquery())
-    total_count = (await db.execute(count_query)).scalar() or 0
+    paginated_query = query.order_by(Resume.upload_date.desc()).offset(offset).limit(limit)
 
-    # Paginate
-    query = query.order_by(Resume.upload_date.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    rows = result.all()
+    count_res = await db.execute(count_query)
+    data_res = await db.execute(paginated_query)
+
+    total_count = count_res.scalar() or 0
+    rows = data_res.all()
 
     # Get application status for these resumes
     resume_ids = [r[0].id for r in rows]
@@ -374,7 +402,10 @@ async def dispatch_upload_notifications_and_stats(
     from app.modules.notifications.models import Notification
     from app.modules.users.models import SubAdminAssignment
     from app.modules.activity_logs.models import ActivityLog
-    from datetime import datetime
+    from datetime import datetime, date as dt_date
+
+    today_date = batch_date or dt_date.today()
+    today_start = datetime.combine(today_date, datetime.min.time())
 
     # 1. Activity Log for batch
     db.add(
@@ -455,27 +486,24 @@ async def dispatch_upload_notifications_and_stats(
 
     await db.flush()
 
-    # Calculate live dashboard statistics for employee
-    today_date = date.today()
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-
-    today_uploads = (
+    stats_row = (
         await db.execute(
-            select(func.count(Resume.id)).where(
-                Resume.uploaded_by == current_user.id,
-                or_(
-                    Resume.resume_date == today_date,
-                    Resume.upload_date >= today_start,
-                ),
+            select(
+                select(func.count(Resume.id)).where(
+                    Resume.uploaded_by == current_user.id,
+                    or_(
+                        Resume.resume_date == today_date,
+                        Resume.upload_date >= today_start,
+                    ),
+                ).scalar_subquery().label("today_uploads"),
+                select(func.count(Resume.id)).where(
+                    Resume.uploaded_by == current_user.id
+                ).scalar_subquery().label("total_resumes"),
             )
         )
-    ).scalar() or 0
-
-    total_resumes = (
-        await db.execute(
-            select(func.count(Resume.id)).where(Resume.uploaded_by == current_user.id)
-        )
-    ).scalar() or 0
+    ).one()
+    today_uploads = stats_row.today_uploads or 0
+    total_resumes = stats_row.total_resumes or 0
 
     return UploadDashboardStats(
         today_uploads=today_uploads,
@@ -585,8 +613,15 @@ async def process_bulk_upload(
     if tasks_to_upload:
         upload_results = await asyncio.gather(*[upload_task(t) for t in tasks_to_upload])
         from app.modules.activity_logs.models import ActivityLog
+        entities_to_add = []
         for f_bytes, f_name, f_parsed, t_comp, t_role, c_name, upload_res in upload_results:
+            r_id = uuid.uuid4()
+            app_id = uuid.uuid4()
+            now_dt = datetime.now(timezone.utc)
+            app_applied_date = datetime.combine(batch_date, now_dt.time()).replace(tzinfo=timezone.utc) if batch_date else now_dt
+
             resume = Resume(
+                id=r_id,
                 candidate_name=c_name,
                 company=t_comp,
                 role=t_role,
@@ -598,16 +633,11 @@ async def process_bulk_upload(
                 drive_file_id=upload_res.get("drive_file_id"),
                 original_filename=f_name,
             )
-            db.add(resume)
-            await db.flush()
-
-            # Also create corresponding Application in candidate pipeline for real-time target quota tracking
-            from app.modules.applications.models import Application, ApplicationEvent
-            now_dt = datetime.now(timezone.utc)
-            app_applied_date = datetime.combine(batch_date, now_dt.time()).replace(tzinfo=timezone.utc) if batch_date else now_dt
+            entities_to_add.append(resume)
 
             application = Application(
-                resume_id=resume.id,
+                id=app_id,
+                resume_id=r_id,
                 candidate_name=c_name,
                 company=t_comp,
                 role=t_role,
@@ -618,12 +648,12 @@ async def process_bulk_upload(
                 current_round="Initial Application",
                 applied_date=app_applied_date,
             )
-            db.add(application)
-            await db.flush()
+            entities_to_add.append(application)
 
-            db.add(
+            entities_to_add.append(
                 ApplicationEvent(
-                    application_id=application.id,
+                    id=uuid.uuid4(),
+                    application_id=app_id,
                     event_type="Submitted",
                     round_name="Initial Application",
                     created_by=current_user.id,
@@ -631,14 +661,14 @@ async def process_bulk_upload(
                 )
             )
 
-            # Log activity per candidate
-            db.add(
+            entities_to_add.append(
                 ActivityLog(
+                    id=uuid.uuid4(),
                     user_id=current_user.id,
                     action="resume_uploaded",
                     details={
-                        "resume_id": str(resume.id),
-                        "application_id": str(application.id),
+                        "resume_id": str(r_id),
+                        "application_id": str(app_id),
                         "client": client.company_name,
                         "company": t_comp,
                         "candidate": c_name,
@@ -662,10 +692,13 @@ async def process_bulk_upload(
                     requirement_code=selected_req.role_code if selected_req else None,
                     resume_date=batch_date,
                     drive_file_id=resume.drive_file_id,
-                    saved_resume_id=resume.id,
+                    saved_resume_id=r_id,
                 )
             )
             saved_count += 1
+
+        db.add_all(entities_to_add)
+        await db.flush()
 
     # Auto-Sync Notifications & Dashboard Telemetry
     dash_stats = None
@@ -824,6 +857,57 @@ async def get_resume_by_id(
     return resume
 
 
+async def get_resume_response_by_id(
+    db: AsyncSession, resume_id: uuid.UUID, current_user: User
+) -> ResumeResponse | None:
+    allowed_clients = await get_allowed_client_ids(db, current_user)
+    query = (
+        select(Resume, Client.company_name, User.name, Requirement.role_code)
+        .join(Client, Resume.client_id == Client.id)
+        .join(User, Resume.uploaded_by == User.id)
+        .outerjoin(Requirement, Resume.requirement_id == Requirement.id)
+        .where(Resume.id == resume_id)
+    )
+    if allowed_clients is not None:
+        query = query.where(Resume.client_id.in_(allowed_clients))
+    result = (await db.execute(query)).first()
+    if not result:
+        return None
+    resume, client_name, uploader_name, req_code = result
+
+    # Check if application exists
+    app_exists = (await db.execute(
+        select(Application.id).where(Application.resume_id == resume_id)
+    )).scalar_one_or_none() is not None
+
+    notes_visible = resume.client_notes
+    if current_user.role == "client" and not resume.is_note_shared:
+        notes_visible = None
+
+    return ResumeResponse(
+        id=resume.id,
+        display_id=resume.display_id,
+        candidate_name=resume.candidate_name,
+        company=resume.company or "General",
+        role=resume.role,
+        resume_id_tag=resume.resume_id_tag,
+        requirement_id=resume.requirement_id,
+        requirement_code=req_code,
+        client_id=resume.client_id,
+        client_name=client_name,
+        uploaded_by=resume.uploaded_by,
+        uploader_name=uploader_name,
+        original_filename=resume.original_filename,
+        resume_date=resume.resume_date,
+        client_notes=notes_visible,
+        is_note_shared=resume.is_note_shared,
+        drive_file_id=resume.drive_file_id,
+        drive_url=f"https://drive.google.com/file/d/{resume.drive_file_id}/view" if resume.drive_file_id and not resume.drive_file_id.startswith("file_") else None,
+        upload_date=resume.upload_date,
+        has_application=app_exists,
+    )
+
+
 async def find_matching_resume(
     db: AsyncSession,
     client_id: uuid.UUID,
@@ -836,8 +920,6 @@ async def find_matching_resume(
     Smart Resume Linking matching logic (Priority 1 -> 2 -> 3 -> 4).
     Search ONLY within the specified client_id. Never cross-search other clients.
     """
-    from app.modules.resumes.schemas import FindResumeMatchResponse
-
     if not client_id:
         return FindResumeMatchResponse(matched=False)
 

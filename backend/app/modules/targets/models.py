@@ -6,7 +6,7 @@ Admin sets daily targets per employee per client.
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -19,6 +19,8 @@ class Target(Base):
             "employee_id", "client_id", "effective_date",
             name="uq_target_employee_client_date",
         ),
+        Index("ix_targets_emp_status", "employee_id", "status"),
+        Index("ix_targets_client_status", "client_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -32,13 +34,13 @@ class Target(Base):
     )
     daily_target: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(
-        String(20), default="active", nullable=False
+        String(20), default="active", nullable=False, index=True
     )  # active, paused, ended
     effective_date: Mapped[date] = mapped_column(
-        Date, nullable=False, server_default=func.current_date()
+        Date, nullable=False, server_default=func.current_date(), index=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
 
     # Relationships

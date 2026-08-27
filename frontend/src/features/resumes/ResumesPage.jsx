@@ -80,11 +80,11 @@ export function ResumesPage() {
   const [deleteResumeTarget, setDeleteResumeTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Load clients and companies
+  // Load clients and companies once on mount
   useEffect(() => {
     api.get('/clients').then((res) => setClients(res.data || [])).catch(() => {});
     api.get('/resumes/companies').then((res) => setCompanies(res.data || [])).catch(() => {});
-  }, [searchParams]);
+  }, []);
 
   // Fetch resumes with global date filter support
   const fetchResumes = async () => {

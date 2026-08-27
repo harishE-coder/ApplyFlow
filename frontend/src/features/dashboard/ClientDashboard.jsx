@@ -62,8 +62,12 @@ export function ClientDashboard() {
       } else if (dateRange) {
         params.date_range = dateRange;
       }
-      const res = await api.get('/dashboard/client', { params });
-      setData(res.data);
+      const res = await api.get('/dashboard/client/home', { params });
+      if (res.data?.dashboard) {
+        setData(res.data.dashboard);
+      } else {
+        setData(res.data);
+      }
     } catch (err) {
       toastError('Dashboard Error', 'Failed to load client portal telemetry');
     } finally {

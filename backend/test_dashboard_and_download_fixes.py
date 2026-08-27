@@ -66,11 +66,13 @@ async def run_tests():
         # ---------------------------------------------------------------------
         # TEST 1: DASHBOARD UPLOAD COUNT LIVE SQL RECALCULATION
         # ---------------------------------------------------------------------
-        print("\n--- TEST 1: Live Dashboard Upload Count Verification ---")
+        print("\n--- TEST 1: Live Dashboard Upload Count Verification ---", flush=True)
 
-        # Get pre-upload metrics
+        print("Fetching pre_emp_dash...", flush=True)
         pre_emp_dash = await get_employee_dashboard(db, user=emp_user, client_id=client_obj.id, date_range="today")
+        print("Fetching pre_admin_dash...", flush=True)
         pre_admin_dash = await get_admin_overview(db, current_user=admin_user, client_id=client_obj.id, date_range="today")
+        print("Fetching pre_client_dash...", flush=True)
         pre_client_dash = await get_client_dashboard(db, user=client_user)
 
         initial_emp_today = pre_emp_dash.today_uploads
@@ -80,10 +82,10 @@ async def run_tests():
         initial_client_applied = pre_client_dash.applied_count
         initial_client_today = pre_client_dash.today_uploads
 
-        print(f"📊 Baseline Counts:")
-        print(f"   - Employee: Today={initial_emp_today}, Total={initial_emp_total}")
-        print(f"   - Admin: Today={initial_admin_today}, Total={initial_admin_total}")
-        print(f"   - Client: Applied={initial_client_applied}, Today={initial_client_today}")
+        print(f"📊 Baseline Counts:", flush=True)
+        print(f"   - Employee: Today={initial_emp_today}, Total={initial_emp_total}", flush=True)
+        print(f"   - Admin: Today={initial_admin_today}, Total={initial_admin_total}", flush=True)
+        print(f"   - Client: Applied={initial_client_applied}, Today={initial_client_today}", flush=True)
 
         # Ingest 15 new resumes
         batch_size = 15
@@ -99,27 +101,27 @@ async def run_tests():
                 uploaded_by=emp_user.id,
                 resume_date=date.today(),
                 original_filename=f"FixTest_{batch_uid}_{i+1}.pdf",
-                drive_file_id=f"drive_fix_{batch_uid}_{i+1}",
+                drive_file_id=f"file_fix_{batch_uid}_{i+1}",
             )
             db.add(r)
             saved_resumes.append(r)
 
         await db.commit()
-        for r in saved_resumes:
-            await db.refresh(r)
 
-        # Get post-upload metrics
+        print("Fetching post_emp_dash...", flush=True)
         post_emp_dash = await get_employee_dashboard(db, user=emp_user, client_id=client_obj.id, date_range="today")
+        print("Fetching post_admin_dash...", flush=True)
         post_admin_dash = await get_admin_overview(db, current_user=admin_user, client_id=client_obj.id, date_range="today")
+        print("Fetching post_client_dash...", flush=True)
         post_client_dash = await get_client_dashboard(db, user=client_user)
 
-        print(f"\n📈 Post-Upload Counts (After +{batch_size} upload):")
-        print(f"   - Employee: Today={post_emp_dash.today_uploads} (Expected: {initial_emp_today + batch_size})")
-        print(f"   - Employee: Total={post_emp_dash.total_uploads} (Expected: {initial_emp_total + batch_size})")
-        print(f"   - Admin: Today={post_admin_dash.today_uploads} (Expected: {initial_admin_today + batch_size})")
-        print(f"   - Admin: Total={post_admin_dash.total_resumes} (Expected: {initial_admin_total + batch_size})")
-        print(f"   - Client: Applied={post_client_dash.applied_count} (Expected: {initial_client_applied + batch_size})")
-        print(f"   - Client: Today={post_client_dash.today_uploads} (Expected: {initial_client_today + batch_size})")
+        print(f"\n📈 Post-Upload Counts (After +{batch_size} upload):", flush=True)
+        print(f"   - Employee: Today={post_emp_dash.today_uploads} (Expected: {initial_emp_today + batch_size})", flush=True)
+        print(f"   - Employee: Total={post_emp_dash.total_uploads} (Expected: {initial_emp_total + batch_size})", flush=True)
+        print(f"   - Admin: Today={post_admin_dash.today_uploads} (Expected: {initial_admin_today + batch_size})", flush=True)
+        print(f"   - Admin: Total={post_admin_dash.total_resumes} (Expected: {initial_admin_total + batch_size})", flush=True)
+        print(f"   - Client: Applied={post_client_dash.applied_count} (Expected: {initial_client_applied + batch_size})", flush=True)
+        print(f"   - Client: Today={post_client_dash.today_uploads} (Expected: {initial_client_today + batch_size})", flush=True)
 
         assert post_emp_dash.today_uploads == initial_emp_today + batch_size, "Employee today_uploads didn't match"
         assert post_emp_dash.total_uploads == initial_emp_total + batch_size, "Employee total_uploads didn't match"
@@ -128,7 +130,7 @@ async def run_tests():
         assert post_client_dash.applied_count == initial_client_applied + batch_size, "Client applied_count didn't match"
         assert post_client_dash.today_uploads == initial_client_today + batch_size, "Client today_uploads didn't match"
 
-        print("✅ TEST 1 PASSED: Dashboard upload counts accurately recalculate and increase in real-time!")
+        print("✅ TEST 1 PASSED: Dashboard upload counts accurately recalculate and increase in real-time!", flush=True)
 
         # ---------------------------------------------------------------------
         # TEST 2: RESUME DOWNLOAD AND PREVIEW RETURNING RAW PDF (NEVER HTML)
@@ -202,6 +204,12 @@ async def run_tests():
             print(f"✅ Unauthorized Client access: BLOCKED ({e.status_code} {e.detail})")
 
         print("✅ TEST 3 PASSED: Role-based permissions strictly enforced.")
+
+        # Cleanup test resumes
+        for r in saved_resumes:
+            await db.delete(r)
+        await db.commit()
+        print("✅ Test data cleaned up.")
 
     print("\n" + "=" * 74)
     print("🎉 ALL CRITICAL BUG FIX TESTS (100%) PASSED SUCCESSFULLY!")

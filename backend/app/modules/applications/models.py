@@ -6,7 +6,7 @@ Powers the AI Email Intake & Application Timeline system.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, JSON, Boolean, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -50,6 +50,11 @@ class EmailIntake(Base):
 
 class Application(Base):
     __tablename__ = "applications"
+    __table_args__ = (
+        Index("ix_apps_emp_applied", "employee_id", "applied_date"),
+        Index("ix_apps_client_applied", "client_id", "applied_date"),
+        Index("ix_apps_status_applied", "status", "applied_date"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4
@@ -76,7 +81,7 @@ class Application(Base):
         ForeignKey("clients.id"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(
-        String(50), nullable=False, default="Submitted"
+        String(50), nullable=False, default="Submitted", index=True
     )  # "Submitted", "Round 1", "Round 2", "Technical", "Manager", "HR", "Shortlisted", "Offer", "Rejected", "Hold", "Closed", "Archived"
     current_round: Mapped[str | None] = mapped_column(
         String(100), nullable=True, default="Initial Application"
@@ -94,10 +99,10 @@ class Application(Base):
         Boolean, default=False
     )
     applied_date: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True
     )
 
     # Relationships

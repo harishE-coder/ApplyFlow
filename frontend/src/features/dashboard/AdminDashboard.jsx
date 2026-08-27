@@ -75,30 +75,11 @@ export function AdminDashboard() {
   const [allTargets, setAllTargets] = useState([]);
   const [attendanceSummary, setAttendanceSummary] = useState(null);
 
-  // Fetch initial static entities (clients, employees, targets)
-  useEffect(() => {
-    const fetchInit = async () => {
-      try {
-        const [clientsRes, empsRes, targetsRes] = await Promise.all([
-          api.get('/clients'),
-          api.get('/employees'),
-          api.get('/targets'),
-        ]);
-        setClients(clientsRes.data || []);
-        setAllEmployees(empsRes.data || []);
-        setAllTargets(targetsRes.data || []);
-      } catch (err) {
-        console.error('Failed to load initial metadata:', err);
-      }
-    };
-    fetchInit();
-  }, []);
-
   // Cascading Employee list based on selected client
   const availableEmployees = useMemo(() => {
     if (!selectedClientId) return allEmployees;
     return allEmployees.filter((emp) =>
-      emp.assigned_clients?.some((c) => c.client_id === selectedClientId)
+      emp.assigned_clients?.some((c) => (c.client_id || c.id) === selectedClientId)
     );
   }, [selectedClientId, allEmployees]);
 
@@ -107,8 +88,8 @@ export function AdminDashboard() {
     if (newClientId) {
       const stillValid = allEmployees.some(
         (emp) =>
-          emp.employee_id === selectedEmployeeId &&
-          emp.assigned_clients?.some((c) => c.client_id === newClientId)
+          (emp.id || emp.employee_id) === selectedEmployeeId &&
+          emp.assigned_clients?.some((c) => (c.client_id || c.id) === newClientId)
       );
       if (!stillValid) setSelectedEmployeeId('');
     }
@@ -142,7 +123,7 @@ export function AdminDashboard() {
     }
   };
 
-  // Fetch reactive overview data
+  // Fetch all dashboard data and metadata in 1 consolidated roundtrip
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -157,17 +138,18 @@ export function AdminDashboard() {
         params.date_range = selectedDate;
       }
 
-      const [overviewRes, teamRes, attRes, clientCardsRes] = await Promise.all([
-        api.get('/dashboard/admin/overview', { params }),
-        api.get('/dashboard/admin/employees'),
-        api.get('/attendance/admin-summary'),
-        api.get('/dashboard/admin/clients'),
-      ]);
+      const res = await api.get('/dashboard/admin/home', { params });
+      const homeData = res.data;
 
-      setOverview(overviewRes.data);
-      setTeamPerformance(teamRes.data || []);
-      setAttendanceSummary(attRes.data);
-      setClientCards(clientCardsRes.data || []);
+      if (homeData) {
+        if (homeData.overview) setOverview(homeData.overview);
+        if (homeData.team_performance) setTeamPerformance(homeData.team_performance);
+        if (homeData.attendance_summary) setAttendanceSummary(homeData.attendance_summary);
+        if (homeData.client_cards) setClientCards(homeData.client_cards);
+        if (homeData.clients?.length) setClients(homeData.clients);
+        if (homeData.all_employees?.length) setAllEmployees(homeData.all_employees);
+        if (homeData.all_targets?.length) setAllTargets(homeData.all_targets);
+      }
     } catch (err) {
       toastError('Dashboard Error', 'Failed to load telemetry metrics');
     } finally {
@@ -216,7 +198,7 @@ export function AdminDashboard() {
       recruiters = clientTargets.length || (availableEmployees.length || 1);
     } else if (selectedEmployeeId) {
       // Sum targets for this specific employee
-      const empTargets = allTargets.filter((t) => t.employee_id === selectedEmployeeId);
+      const empTargets = allTargets.filter((t) => (t.employee_id || t.id) === selectedEmployeeId);
       targetSum = empTargets.reduce((sum, t) => sum + (t.daily_target || 0), 0);
       if (targetSum === 0) targetSum = 35;
       recruiters = 1;
@@ -244,13 +226,14 @@ export function AdminDashboard() {
   // -------------------------------------------------------------
   const recruiterRows = useMemo(() => {
     let list = teamPerformance.map((emp) => {
+      const empId = emp.id || emp.employee_id;
       // Calculate target for this recruiter (scoped by selected client if any)
       let target = 0;
       if (selectedClientId) {
-        const t = allTargets.find((tg) => tg.employee_id === emp.employee_id && tg.client_id === selectedClientId);
+        const t = allTargets.find((tg) => (tg.employee_id || tg.id) === empId && tg.client_id === selectedClientId);
         target = t ? t.daily_target : 0;
       } else {
-        const empTargs = allTargets.filter((tg) => tg.employee_id === emp.employee_id);
+        const empTargs = allTargets.filter((tg) => (tg.employee_id || tg.id) === empId);
         target = empTargs.reduce((s, tg) => s + (tg.daily_target || 0), 0);
         if (target === 0) target = emp.daily_target || 25;
       }
@@ -271,12 +254,12 @@ export function AdminDashboard() {
     // Filter by client if client selected
     if (selectedClientId) {
       list = list.filter((emp) =>
-        emp.assigned_clients?.some((c) => c.client_id === selectedClientId)
+        emp.assigned_clients?.some((c) => (c.client_id || c.id) === selectedClientId)
       );
     }
     // Filter by employee if single employee selected
     if (selectedEmployeeId) {
-      list = list.filter((emp) => emp.employee_id === selectedEmployeeId);
+      list = list.filter((emp) => (emp.id || emp.employee_id) === selectedEmployeeId);
     }
 
     // Sort based on sortOption
@@ -437,7 +420,7 @@ export function AdminDashboard() {
             >
               <option value="">All Recruiters ({availableEmployees.length})</option>
               {availableEmployees.map((emp) => (
-                <option key={emp.employee_id} value={emp.employee_id}>
+                <option key={emp.id || emp.employee_id} value={emp.id || emp.employee_id}>
                   {emp.name} ({emp.email})
                 </option>
               ))}

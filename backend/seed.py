@@ -1,12 +1,12 @@
 """
 ApplyFlow Production Database Initialization & Seed Script.
-Initializes a clean, empty production database with the single Super Admin account.
+Initializes a clean, empty production database with the single Super Admin account in Neon PostgreSQL.
 """
 
 import asyncio
-from sqlalchemy import delete, select
+from sqlalchemy import create_engine, delete, select
 from app.core.config import settings
-from app.core.database import async_session_factory, Base, engine
+from app.core.database import async_session_factory, Base
 from app.core.security import hash_password
 from app.modules.users.models import User, SubAdminAssignment
 from app.modules.clients.models import Client, EmployeeClient
@@ -21,11 +21,7 @@ from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead
 
 
 async def seed_database():
-    print("🌱 Initializing clean production database schema...")
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    print("🌱 Initializing clean production database schema in Neon PostgreSQL...", flush=True)
 
     async with async_session_factory() as db:
         # Clear all tables in correct FK order

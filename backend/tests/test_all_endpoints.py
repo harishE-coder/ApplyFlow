@@ -50,27 +50,7 @@ async def test_filename_parser():
 
 @pytest.mark.anyio
 async def test_admin_flow_and_exports():
-    # Ensure Super Admin exists in DB with correct password
-    async with async_session_factory() as db:
-        admin_user = (await db.execute(select(User).where(User.email.ilike(settings.admin_email)))).scalars().first()
-        if not admin_user:
-            admin_user = User(
-                name=settings.admin_name,
-                email=settings.admin_email.lower(),
-                password_hash=hash_password(settings.admin_password),
-                role="admin",
-                is_active=True,
-                status="active",
-            )
-            db.add(admin_user)
-        else:
-            admin_user.password_hash = hash_password(settings.admin_password)
-            admin_user.is_active = True
-            admin_user.status = "active"
-        await db.commit()
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", timeout=60.0) as client:
         # 1. Admin Login with production credentials
         login_res = await client.post(
             "/api/auth/login",
@@ -109,8 +89,7 @@ async def test_admin_flow_and_exports():
 
 @pytest.mark.anyio
 async def test_unauthenticated_security_boundaries():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", timeout=60.0) as client:
         # 1. Unauthenticated request to admin overview blocked
         dash_res = await client.get("/api/dashboard/admin/overview")
         assert dash_res.status_code in [401, 403]

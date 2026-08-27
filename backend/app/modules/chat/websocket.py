@@ -24,6 +24,9 @@ router = APIRouter()
 # Connection Manager
 # ---------------------------------------------------------------------------
 
+from starlette.websockets import WebSocketState
+
+
 class ConnectionManager:
     """Manages active WebSocket connections per room."""
 
@@ -34,7 +37,8 @@ class ConnectionManager:
         self.user_info: dict[str, dict] = {}
 
     async def connect(self, websocket: WebSocket, room_id: str, user_id: str, user_name: str, user_role: str):
-        await websocket.accept()
+        if websocket.client_state != WebSocketState.CONNECTED:
+            await websocket.accept()
         if room_id not in self.active_connections:
             self.active_connections[room_id] = {}
         self.active_connections[room_id][user_id] = websocket

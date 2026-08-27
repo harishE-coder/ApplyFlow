@@ -10,6 +10,7 @@ from app.core.dependencies import get_current_user, require_role
 from app.modules.users.models import User
 from app.modules.resumes.schemas import (
     ResumeResponse,
+    ResumeUpdate,
     BulkUploadResponse,
     ConfirmManualUploadRequest,
     CheckDuplicatesRequest,
@@ -78,11 +79,11 @@ async def search_resumes(
     role: str | None = Query(None, description="Filter by role"),
     candidate_name: str | None = Query(None, description="Filter by candidate name"),
     resume_id_tag: str | None = Query(None, description="Filter by Resume ID / Tag"),
-    resume_date: date | None = Query(None, description="Filter by specific upload date (YYYY-MM-DD)"),
+    resume_date: str | None = Query(None, description="Filter by specific upload date (YYYY-MM-DD)"),
     date_filter: str | None = Query(None, description="Date filter preset (today, yesterday, this_week, this_month, custom)"),
-    custom_date: date | None = Query(None, description="Custom date (YYYY-MM-DD)"),
-    start_date: date | None = Query(None, description="Start date (YYYY-MM-DD)"),
-    end_date: date | None = Query(None, description="End date (YYYY-MM-DD)"),
+    custom_date: str | None = Query(None, description="Custom date (YYYY-MM-DD)"),
+    start_date: str | None = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: str | None = Query(None, description="End date (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -138,9 +139,8 @@ async def upload_resumes_bulk(
     if current_user.role != "employee":
         raise HTTPException(
             status_code=403,
-            detail="Permission Denied: Only recruiters can upload resumes. Administrators and Clients cannot upload resumes.",
+            detail="Forbidden: Only Recruiters can upload resumes.",
         )
-
     return await service.process_bulk_upload(
         db=db,
         current_user=current_user,
@@ -151,17 +151,18 @@ async def upload_resumes_bulk(
     )
 
 
-@router.post("/confirm-upload", response_model=list[ResumeResponse])
-async def confirm_manual_upload(
+@router.post("/confirm-manual", response_model=list[ResumeResponse])
+async def confirm_manual(
     payload: ConfirmManualUploadRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Save reviewed/edited resumes after manual verification in UI."""
-    if current_user.role != "employee":
-        raise HTTPException(status_code=403, detail="Only recruiters can confirm uploads.")
-
-    return await service.confirm_manual_uploads(db, current_user, payload.items)
+    """Confirm metadata for files needing manual review."""
+    return await service.confirm_manual_uploads(
+        db=db,
+        current_user=current_user,
+        items=payload.items,
+    )
 
 
 @router.get("/{resume_id}", response_model=ResumeResponse)
@@ -203,21 +204,25 @@ async def preview_resume(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Secure resume PDF preview endpoint (inline streaming)."""
+    """
+    Stream raw PDF binary bytes directly with application/pdf header.
+    Never returns HTML.
+    """
     resume = await service.get_resume_by_id(db, resume_id, current_user)
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
     file_bytes, mime_type = await drive_service.get_file_bytes(
-        file_id=resume.drive_file_id or "",
+        file_id=resume.drive_file_id,
         original_filename=resume.original_filename,
     )
 
-    return StreamingResponse(
-        io.BytesIO(file_bytes),
-        media_type=mime_type,
+    return FastAPIResponse(
+        content=file_bytes,
+        media_type=mime_type or "application/pdf",
         headers={
-            "Content-Disposition": f'inline; filename="{resume.original_filename}"'
+            "Content-Disposition": f'inline; filename="{resume.original_filename}"',
+            "Cache-Control": "public, max-age=3600",
         },
     )
 
@@ -228,13 +233,15 @@ async def download_resume(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Secure resume PDF download endpoint (attachment streaming)."""
+    """
+    Download raw resume file with attachment Content-Disposition.
+    """
     resume = await service.get_resume_by_id(db, resume_id, current_user)
     if not resume:
         raise HTTPException(status_code=404, detail="Resume not found")
 
     file_bytes, mime_type = await drive_service.get_file_bytes(
-        file_id=resume.drive_file_id or "",
+        file_id=resume.drive_file_id,
         original_filename=resume.original_filename,
     )
 
@@ -256,8 +263,11 @@ async def update_resume_endpoint(
     current_user: User = Depends(get_current_user),
 ):
     """Update resume metadata / move client."""
-    resume = await service.update_resume(db, resume_id, payload, current_user)
-    return await service.get_resume_by_id(db, resume_id, current_user)
+    await service.update_resume(db, resume_id, payload, current_user)
+    res = await service.get_resume_response_by_id(db, resume_id, current_user)
+    if not res:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    return res
 
 
 @router.delete("/{resume_id}", dependencies=[Depends(require_role("admin", "sub_admin", "employee"))])

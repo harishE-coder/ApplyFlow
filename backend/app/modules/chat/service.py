@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import select, func, or_, and_, desc
+from sqlalchemy import select, func, or_, and_, desc, text
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status, UploadFile
@@ -64,41 +64,97 @@ async def get_or_create_room(db: AsyncSession, client_id: uuid.UUID) -> ChatRoom
 async def get_rooms_for_user(db: AsyncSession, user: User) -> ChatRoomsListResponse:
     allowed = await get_allowed_client_ids(db, user)
 
-    query = select(Client).order_by(Client.company_name)
+    # 1. Rooms & last message in 1 query
+    client_filter = ""
+    params = {"user_id": user.id}
     if allowed is not None:
-        query = query.where(Client.id.in_(allowed))
+        if not allowed:
+            return ChatRoomsListResponse(items=[], total_unread=0)
+        client_filter = "AND c.id = ANY(:allowed_cids)"
+        params["allowed_cids"] = list(allowed)
 
-    clients = (await db.execute(query)).scalars().all()
+    q1 = text(f"""
+        SELECT c.id AS client_id, c.company_name, r.id AS room_id, COALESCE(r.status, 'active') AS room_status,
+               lm.message AS last_message, u.name AS last_sender, lm.created_at AS last_message_at
+        FROM clients c
+        LEFT JOIN chat_rooms r ON r.client_id = c.id
+        LEFT JOIN LATERAL (
+            SELECT m.message, m.sender_id, m.created_at
+            FROM chat_messages m
+            WHERE m.room_id = r.id
+            ORDER BY m.created_at DESC
+            LIMIT 1
+        ) lm ON true
+        LEFT JOIN users u ON u.id = lm.sender_id
+        WHERE c.is_active = true {client_filter}
+        ORDER BY c.company_name;
+    """)
+    rooms_rows = (await db.execute(q1, params)).mappings().all()
+    if not rooms_rows:
+        return ChatRoomsListResponse(items=[], total_unread=0)
+
+    # If any active client is missing a room in DB, ensure it exists
+    missing_cids = [r["client_id"] for r in rooms_rows if r["room_id"] is None]
+    if missing_cids:
+        for cid in missing_cids:
+            db.add(ChatRoom(id=uuid.uuid4(), client_id=cid, status="active"))
+        await db.commit()
+        rooms_rows = (await db.execute(q1, params)).mappings().all()
+
+    client_ids = [r["client_id"] for r in rooms_rows]
+    params["client_ids"] = client_ids
+
+    # 2. Participants in 1 query
+    q2 = text("""
+        SELECT c.id AS client_id, u.id, u.name, u.role, COALESCE(ec.is_primary, false) AS is_primary
+        FROM clients c
+        JOIN users u ON (
+            u.role = 'admin' 
+            OR u.id IN (SELECT sub_admin_id FROM sub_admin_assignments WHERE client_id = c.id AND active = true)
+            OR u.id IN (SELECT employee_id FROM employee_clients WHERE client_id = c.id AND active = true)
+            OR (u.client_id = c.id AND u.role = 'client')
+        )
+        LEFT JOIN employee_clients ec ON ec.client_id = c.id AND ec.employee_id = u.id AND ec.active = true
+        WHERE c.id = ANY(:client_ids) AND u.is_active = true
+        ORDER BY u.name;
+    """)
+    part_rows = (await db.execute(q2, params)).mappings().all()
+    part_map = {}
+    for p in part_rows:
+        part_map.setdefault(p["client_id"], []).append(
+            ChatParticipant(id=p["id"], name=p["name"], role=p["role"], is_primary=p["is_primary"])
+        )
+
+    # 3. Unread counts in 1 query
+    q3 = text("""
+        SELECT r.id AS room_id, COUNT(m.id) AS unread_count
+        FROM chat_rooms r
+        JOIN chat_messages m ON m.room_id = r.id AND m.sender_id != :user_id
+        LEFT JOIN chat_reads cr ON cr.room_id = r.id AND cr.user_id = :user_id
+        WHERE r.client_id = ANY(:client_ids) AND (cr.last_read_at IS NULL OR m.created_at > cr.last_read_at)
+        GROUP BY r.id;
+    """)
+    unread_rows = (await db.execute(q3, params)).mappings().all()
+    unread_map = {u["room_id"]: u["unread_count"] for u in unread_rows}
 
     rooms_out = []
     total_unread = 0
-
-    for client in clients:
-        room = await get_or_create_room(db, client.id)
-        participants = await _get_room_participants(db, client.id)
-
-        last_msg = (
-            await db.execute(
-                select(ChatMessage)
-                .where(ChatMessage.room_id == room.id)
-                .order_by(ChatMessage.created_at.desc())
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-        unread = await _get_unread_count_for_room(db, user.id, room.id)
+    for r in rooms_rows:
+        room_id = r["room_id"]
+        client_id = r["client_id"]
+        unread = unread_map.get(room_id, 0)
         total_unread += unread
 
         rooms_out.append(
             ChatRoomResponse(
-                id=room.id,
-                client_id=client.id,
-                client_name=client.company_name,
-                status=room.status,
-                participants=participants,
-                last_message=last_msg.message if last_msg else None,
-                last_message_sender=last_msg.sender.name if last_msg and last_msg.sender else None,
-                last_message_at=last_msg.created_at if last_msg else None,
+                id=room_id,
+                client_id=client_id,
+                client_name=r["company_name"],
+                status=r["room_status"],
+                participants=part_map.get(client_id, []),
+                last_message=r["last_message"],
+                last_message_sender=r["last_sender"],
+                last_message_at=r["last_message_at"],
                 unread_count=unread,
             )
         )
@@ -184,7 +240,7 @@ async def _get_unread_count_for_room(db: AsyncSession, user_id: uuid.UUID, room_
 
 
 async def get_messages(
-    db: AsyncSession, room_id: uuid.UUID, user: User, limit: int = 50, before_id: uuid.UUID | None = None
+    db: AsyncSession, room_id: uuid.UUID, user: User, limit: int = 20, before_id: uuid.UUID | None = None
 ) -> ChatMessagesListResponse:
     await check_room_access(db, user, room_id)
 
@@ -192,21 +248,37 @@ async def get_messages(
         select(ChatMessage)
         .where(ChatMessage.room_id == room_id)
         .options(selectinload(ChatMessage.sender))
-        .order_by(ChatMessage.created_at.desc())
-        .limit(limit + 1)
     )
 
-    results = (await db.execute(query)).scalars().all()
+    if before_id:
+        cursor_msg = (await db.execute(select(ChatMessage.created_at).where(ChatMessage.id == before_id))).scalar_one_or_none()
+        if cursor_msg:
+            query = query.where(ChatMessage.created_at < cursor_msg)
+
+    query = query.order_by(ChatMessage.created_at.desc()).limit(limit + 1)
+    count_q = select(func.count(ChatMessage.id)).where(ChatMessage.room_id == room_id)
+
+    res_data, res_count = await asyncio.gather(
+        db.execute(query),
+        db.execute(count_q),
+    )
+
+    results = res_data.scalars().all()
     has_more = len(results) > limit
     messages = results[:limit]
 
     items = []
     for msg in reversed(messages):
+        sender_info = MessageSender(
+            id=msg.sender.id if msg.sender else msg.sender_id,
+            name=msg.sender.name if msg.sender else "User",
+            role=msg.sender.role if msg.sender else "employee",
+        )
         items.append(
             ChatMessageResponse(
                 id=msg.id,
                 room_id=msg.room_id,
-                sender=MessageSender(id=msg.sender.id, name=msg.sender.name, role=msg.sender.role),
+                sender=sender_info,
                 message=msg.message,
                 attachment_type=msg.attachment_type,
                 attachment_reference=msg.attachment_reference,
@@ -215,7 +287,7 @@ async def get_messages(
             )
         )
 
-    total = (await db.execute(select(func.count(ChatMessage.id)).where(ChatMessage.room_id == room_id))).scalar() or 0
+    total = res_count.scalar() or 0
 
     return ChatMessagesListResponse(items=items, has_more=has_more, total=total)
 
@@ -381,5 +453,35 @@ async def export_room_chat(db: AsyncSession, room_id: uuid.UUID, user: User) -> 
 
 
 async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
-    rooms_res = await get_rooms_for_user(db, user)
-    return UnreadCountResponse(total_unread=rooms_res.total_unread, unread_count=rooms_res.total_unread)
+    """Lightweight unread count query for header polling."""
+    allowed = await get_allowed_client_ids(db, user)
+
+    room_query = select(ChatRoom.id)
+    if allowed is not None:
+        room_query = room_query.where(ChatRoom.client_id.in_(allowed))
+
+    room_ids = (await db.execute(room_query)).scalars().all()
+    if not room_ids:
+        return UnreadCountResponse(total_unread=0, unread_count=0)
+
+    # 1. Fetch read timestamps for current user
+    read_map = dict(
+        (await db.execute(
+            select(ChatRead.room_id, ChatRead.last_read_at)
+            .where(ChatRead.user_id == user.id, ChatRead.room_id.in_(room_ids))
+        )).all()
+    )
+
+    # 2. Fetch all messages sent by others
+    msg_rows = (await db.execute(
+        select(ChatMessage.room_id, ChatMessage.created_at)
+        .where(ChatMessage.room_id.in_(room_ids), ChatMessage.sender_id != user.id)
+    )).all()
+
+    total_unread = 0
+    for rid, cat in msg_rows:
+        read_time = read_map.get(rid)
+        if read_time is None or (cat and cat > read_time):
+            total_unread += 1
+
+    return UnreadCountResponse(total_unread=total_unread, unread_count=total_unread)

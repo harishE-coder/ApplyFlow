@@ -44,151 +44,187 @@ from app.modules.chat.websocket import router as chat_ws_router
 async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown events."""
     print("🚀 Apply Flow Careers API starting...")
-    # Auto-create new tables and migrate missing columns
     import sqlalchemy
     from app.core.database import engine, Base
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Migrate applications table columns if missing
-        for col, col_type in [
-            ("current_round", "VARCHAR(100)"),
-            ("interview_date", "TIMESTAMP"),
-            ("confidence", "INTEGER DEFAULT 95"),
-            ("last_email_snippet", "TEXT"),
-            ("is_ai_processed", "BOOLEAN DEFAULT 0"),
-            ("updated_at", "TIMESTAMP"),
-        ]:
+
+    if "sqlite" in settings.database_url:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            # Migrate applications table columns if missing
+            for col, col_type in [
+                ("current_round", "VARCHAR(100)"),
+                ("interview_date", "TIMESTAMP"),
+                ("confidence", "INTEGER DEFAULT 95"),
+                ("last_email_snippet", "TEXT"),
+                ("is_ai_processed", "BOOLEAN DEFAULT 0"),
+                ("updated_at", "TIMESTAMP"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE applications ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate clients table columns
+            for col, col_type in [
+                ("deactivated_at", "TIMESTAMP"),
+                ("archived_at", "TIMESTAMP"),
+                ("status", "VARCHAR(20) DEFAULT 'active'"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE clients ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate users table columns
+            for col, col_type in [
+                ("status", "VARCHAR(20) DEFAULT 'active'"),
+                ("phone", "VARCHAR(50)"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate requirements table columns
+            for col, col_type in [
+                ("job_title", "VARCHAR(200)"),
+                ("job_url", "VARCHAR(500)"),
+                ("priority", "VARCHAR(20) DEFAULT 'Medium'"),
+                ("notes", "TEXT"),
+                ("created_by", "CHAR(32)"),
+                ("completed_by", "CHAR(32)"),
+                ("completed_at", "TIMESTAMP"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE requirements ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate chat_rooms table columns
+            for col, col_type in [
+                ("status", "VARCHAR(20) DEFAULT 'active'"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE chat_rooms ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate targets table columns
+            for col, col_type in [
+                ("status", "VARCHAR(20) DEFAULT 'active'"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE targets ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate employee_clients table columns
+            for col, col_type in [
+                ("is_primary", "BOOLEAN DEFAULT 0"),
+                ("active", "BOOLEAN DEFAULT 1"),
+                ("assigned_at", "TIMESTAMP"),
+                ("assigned_by", "CHAR(32)"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE employee_clients ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate chat_reads table columns
+            for col, col_type in [
+                ("last_read_at", "TIMESTAMP"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE chat_reads ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            # Migrate applications table columns for Smart Resume Linking
+            for col, col_type in [
+                ("candidate_name", "VARCHAR(200)"),
+                ("company", "VARCHAR(100)"),
+                ("role", "VARCHAR(200)"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE applications ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
             try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE applications ADD COLUMN {col} {col_type}"))
+                res = await conn.execute(sqlalchemy.text("PRAGMA table_info(applications)"))
+                cols = res.fetchall()
+                resume_col = [c for c in cols if c[1] == 'resume_id']
+                if resume_col and resume_col[0][3] == 1:
+                    await conn.execute(sqlalchemy.text("PRAGMA foreign_keys=OFF"))
+                    await conn.execute(sqlalchemy.text("""
+                        CREATE TABLE applications_new (
+                            id CHAR(32) PRIMARY KEY,
+                            resume_id CHAR(32),
+                            requirement_id CHAR(32),
+                            employee_id CHAR(32) NOT NULL,
+                            client_id CHAR(32),
+                            status VARCHAR(50) NOT NULL DEFAULT 'Submitted',
+                            applied_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                            current_round VARCHAR(100),
+                            interview_date TIMESTAMP,
+                            confidence INTEGER DEFAULT 95,
+                            last_email_snippet TEXT,
+                            is_ai_processed BOOLEAN DEFAULT 0,
+                            updated_at TIMESTAMP,
+                            candidate_name VARCHAR(200),
+                            company VARCHAR(100),
+                            role VARCHAR(200),
+                            FOREIGN KEY(resume_id) REFERENCES resumes (id),
+                            FOREIGN KEY(requirement_id) REFERENCES requirements (id),
+                            FOREIGN KEY(employee_id) REFERENCES users (id),
+                            FOREIGN KEY(client_id) REFERENCES clients (id)
+                        )
+                    """))
+                    await conn.execute(sqlalchemy.text("""
+                        INSERT INTO applications_new (id, resume_id, requirement_id, employee_id, client_id, status, applied_date, current_round, interview_date, confidence, last_email_snippet, is_ai_processed, updated_at, candidate_name, company, role)
+                        SELECT id, resume_id, requirement_id, employee_id, client_id, status, applied_date, current_round, interview_date, confidence, last_email_snippet, is_ai_processed, updated_at, candidate_name, company, role FROM applications
+                    """))
+                    await conn.execute(sqlalchemy.text("DROP TABLE applications"))
+                    await conn.execute(sqlalchemy.text("ALTER TABLE applications_new RENAME TO applications"))
+                    await conn.execute(sqlalchemy.text("PRAGMA foreign_keys=ON"))
             except Exception:
                 pass
-
-        # Migrate clients table columns
-        for col, col_type in [
-            ("deactivated_at", "TIMESTAMP"),
-            ("archived_at", "TIMESTAMP"),
-            ("status", "VARCHAR(20) DEFAULT 'active'"),
-        ]:
+        print("✅ Database tables and columns verified.")
+    else:
+        async def _init_indexes():
             try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE clients ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
+                async with engine.begin() as conn:
+                    indexes = [
+                        "CREATE INDEX IF NOT EXISTS ix_resumes_client_date ON resumes (client_id, resume_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_resumes_uploader_date ON resumes (uploaded_by, resume_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_resumes_client_comp ON resumes (client_id, company)",
+                        "CREATE INDEX IF NOT EXISTS ix_apps_emp_applied ON applications (employee_id, applied_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_apps_client_applied ON applications (client_id, applied_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_apps_status_applied ON applications (status, applied_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_apps_applied_date ON applications (applied_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_apps_updated_at ON applications (updated_at)",
+                        "CREATE INDEX IF NOT EXISTS ix_targets_emp_status ON targets (employee_id, status)",
+                        "CREATE INDEX IF NOT EXISTS ix_targets_client_status ON targets (client_id, status)",
+                        "CREATE INDEX IF NOT EXISTS ix_targets_effective_date ON targets (effective_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_chat_messages_room_created ON chat_messages (room_id, created_at)",
+                        "CREATE INDEX IF NOT EXISTS ix_notifications_user_read_created ON notifications (user_id, is_read, created_at)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_role_active ON users (role, is_active)",
+                        "CREATE INDEX IF NOT EXISTS ix_users_email_active ON users (email, is_active)",
+                        "CREATE INDEX IF NOT EXISTS ix_emp_client_active ON employee_clients (client_id, active)",
+                        "CREATE INDEX IF NOT EXISTS ix_emp_client_emp_active ON employee_clients (employee_id, active)",
+                    ]
+                    for idx_sql in indexes:
+                        try:
+                            await conn.execute(sqlalchemy.text(idx_sql))
+                        except Exception:
+                            pass
+                print("🚀 Verified Neon PostgreSQL high-speed indexes successfully.")
+            except Exception as e:
+                print("Index verification notice:", e)
 
-        # Migrate users table columns
-        for col, col_type in [
-            ("status", "VARCHAR(20) DEFAULT 'active'"),
-            ("phone", "VARCHAR(50)"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE users ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        # Migrate requirements table columns
-        for col, col_type in [
-            ("job_title", "VARCHAR(200)"),
-            ("job_url", "VARCHAR(500)"),
-            ("priority", "VARCHAR(20) DEFAULT 'Medium'"),
-            ("notes", "TEXT"),
-            ("created_by", "CHAR(32)"),
-            ("completed_by", "CHAR(32)"),
-            ("completed_at", "TIMESTAMP"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE requirements ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        # Migrate chat_rooms table columns
-        for col, col_type in [
-            ("status", "VARCHAR(20) DEFAULT 'active'"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE chat_rooms ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        # Migrate targets table columns
-        for col, col_type in [
-            ("status", "VARCHAR(20) DEFAULT 'active'"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE targets ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        # Migrate employee_clients table columns
-        for col, col_type in [
-            ("is_primary", "BOOLEAN DEFAULT 0"),
-            ("active", "BOOLEAN DEFAULT 1"),
-            ("assigned_at", "TIMESTAMP"),
-            ("assigned_by", "CHAR(32)"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE employee_clients ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        # Migrate chat_reads table columns
-        for col, col_type in [
-            ("last_read_at", "TIMESTAMP"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE chat_reads ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        # Migrate applications table columns for Smart Resume Linking
-        for col, col_type in [
-            ("candidate_name", "VARCHAR(200)"),
-            ("company", "VARCHAR(100)"),
-            ("role", "VARCHAR(200)"),
-        ]:
-            try:
-                await conn.execute(sqlalchemy.text(f"ALTER TABLE applications ADD COLUMN {col} {col_type}"))
-            except Exception:
-                pass
-
-        try:
-            res = await conn.execute(sqlalchemy.text("PRAGMA table_info(applications)"))
-            cols = res.fetchall()
-            resume_col = [c for c in cols if c[1] == 'resume_id']
-            if resume_col and resume_col[0][3] == 1:
-                await conn.execute(sqlalchemy.text("PRAGMA foreign_keys=OFF"))
-                await conn.execute(sqlalchemy.text("""
-                    CREATE TABLE applications_new (
-                        id CHAR(32) PRIMARY KEY,
-                        resume_id CHAR(32),
-                        requirement_id CHAR(32),
-                        employee_id CHAR(32) NOT NULL,
-                        client_id CHAR(32),
-                        status VARCHAR(50) NOT NULL DEFAULT 'Submitted',
-                        applied_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        current_round VARCHAR(100),
-                        interview_date TIMESTAMP,
-                        confidence INTEGER DEFAULT 95,
-                        last_email_snippet TEXT,
-                        is_ai_processed BOOLEAN DEFAULT 0,
-                        updated_at TIMESTAMP,
-                        candidate_name VARCHAR(200),
-                        company VARCHAR(100),
-                        role VARCHAR(200),
-                        FOREIGN KEY(resume_id) REFERENCES resumes (id),
-                        FOREIGN KEY(requirement_id) REFERENCES requirements (id),
-                        FOREIGN KEY(employee_id) REFERENCES users (id),
-                        FOREIGN KEY(client_id) REFERENCES clients (id)
-                    )
-                """))
-                await conn.execute(sqlalchemy.text("""
-                    INSERT INTO applications_new (id, resume_id, requirement_id, employee_id, client_id, status, applied_date, current_round, interview_date, confidence, last_email_snippet, is_ai_processed, updated_at, candidate_name, company, role)
-                    SELECT id, resume_id, requirement_id, employee_id, client_id, status, applied_date, current_round, interview_date, confidence, last_email_snippet, is_ai_processed, updated_at, candidate_name, company, role FROM applications
-                """))
-                await conn.execute(sqlalchemy.text("DROP TABLE applications"))
-                await conn.execute(sqlalchemy.text("ALTER TABLE applications_new RENAME TO applications"))
-                await conn.execute(sqlalchemy.text("PRAGMA foreign_keys=ON"))
-        except Exception:
-            pass
-    print("✅ Database tables and columns verified.")
+        import asyncio
+        asyncio.create_task(_init_indexes())
+        print("Connected to Neon PostgreSQL.")
 
     # Initialize production Super Admin if missing
     try:

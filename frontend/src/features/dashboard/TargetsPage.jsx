@@ -63,12 +63,12 @@ export function TargetsPage() {
 
   const fetchMetadata = async () => {
     try {
-      const [empRes, clientRes] = await Promise.all([
+      const results = await Promise.allSettled([
         api.get('/employees'),
         api.get('/clients'),
       ]);
-      setAllEmployees(empRes.data || []);
-      setClients(clientRes.data || []);
+      if (results[0].status === 'fulfilled') setAllEmployees(results[0].value.data || []);
+      if (results[1].status === 'fulfilled') setClients(results[1].value.data || []);
     } catch (err) {
       console.error('Failed to load employees/clients:', err);
     }
@@ -93,7 +93,8 @@ export function TargetsPage() {
 
   const handleOpenCreate = () => {
     setEditingTarget(null);
-    setFormEmployeeId(employees[0]?.employee_id || '');
+    const firstEmpId = employees[0]?.id || employees[0]?.employee_id || '';
+    setFormEmployeeId(firstEmpId);
     setFormClientId(clients[0]?.id || '');
     setFormDailyTarget(25);
     setIsModalOpen(true);
@@ -101,7 +102,7 @@ export function TargetsPage() {
 
   const handleOpenEdit = (t) => {
     setEditingTarget(t);
-    setFormEmployeeId(t.employee_id);
+    setFormEmployeeId(t.employee_id || t.id);
     setFormClientId(t.client_id);
     setFormDailyTarget(t.daily_target);
     setIsModalOpen(true);
@@ -447,7 +448,7 @@ export function TargetsPage() {
               required
             >
               {employees.map((emp) => (
-                <option key={emp.employee_id} value={emp.employee_id}>
+                <option key={emp.id || emp.employee_id} value={emp.id || emp.employee_id}>
                   {emp.name} ({emp.email})
                 </option>
               ))}

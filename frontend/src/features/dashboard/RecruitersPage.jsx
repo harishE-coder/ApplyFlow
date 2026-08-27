@@ -92,12 +92,12 @@ export function RecruitersPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [empRes, clientsRes] = await Promise.all([
+      const results = await Promise.allSettled([
         api.get(`/employees?status=${statusFilter}`),
         api.get('/clients'),
       ]);
-      setEmployees(empRes.data || []);
-      setClients(clientsRes.data || []);
+      if (results[0].status === 'fulfilled') setEmployees(results[0].value.data || []);
+      if (results[1].status === 'fulfilled') setClients(results[1].value.data || []);
     } catch (err) {
       toastError('Error', 'Failed to load team data');
     } finally {

@@ -69,14 +69,14 @@ export function SubAdminsPage() {
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [saRes, clRes, empRes] = await Promise.all([
+      const results = await Promise.allSettled([
         api.get('/sub-admins?status=all'),
         api.get('/clients'),
         api.get('/users?role=employee'),
       ]);
-      setSubAdmins(saRes.data || []);
-      setClients(clRes.data || []);
-      setEmployees(empRes.data || []);
+      if (results[0].status === 'fulfilled') setSubAdmins(results[0].value.data || []);
+      if (results[1].status === 'fulfilled') setClients(results[1].value.data || []);
+      if (results[2].status === 'fulfilled') setEmployees(results[2].value.data || []);
     } catch (err) {
       console.error('Failed to load sub-admin data:', err);
       showToast('Failed to load sub-admins');
