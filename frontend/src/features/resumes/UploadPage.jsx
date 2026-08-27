@@ -311,13 +311,13 @@ export function UploadPage() {
       }
     } else {
       candidateName = cleanCandidateName(rawFirst || stem);
-      if (selectedClientName && normFirst === normSelected && !hasNoise) {
+      if (selectedClientName) {
         serviceClient = selectedClientName;
         status = 'valid';
         clientMatch = true;
         error = null;
       } else {
-        serviceClient = selectedClientName || 'ServiceClient';
+        serviceClient = 'ServiceClient';
         status = 'needs_review';
         clientMatch = false;
         error = 'Cannot detect ServiceClient from filename';

@@ -32,13 +32,31 @@ def test_service_client_verification_rules():
     assert res3["error"] == "ServiceClient Mismatch"
     print("✅ Verified Mismatch detection!")
 
-    print("\n--- Test 4: Teksystems selected with Suresh_resume (3).pdf (Undetected ServiceClient) ---")
-    res4 = parse_resume_filename("Suresh_resume (3).pdf", selected_client_name="Teksystems")
+    print("\n--- Test 4: Teksystems selected with Suresh_resume (2).pdf (Natural Candidate Resume) ---")
+    res4 = parse_resume_filename("Suresh_resume (2).pdf", selected_client_name="Teksystems")
     print("Result 4:", res4)
-    assert res4["status"] == "needs_review"
-    assert res4["client_match"] is False
-    assert res4["error"] == "Cannot detect ServiceClient from filename"
-    print("✅ Verified Undetected ServiceClient detection!")
+    assert res4["status"] == "valid"
+    assert res4["client_match"] is True
+    assert res4["service_client"] == "Teksystems"
+    assert res4["candidate_name"] == "Suresh"
+    print("✅ Verified Natural Resume auto-inheritance!")
+
+    print("\n--- Test 5: Teksystems selected with Suresh_resume.pdf (Natural Candidate Resume) ---")
+    res5 = parse_resume_filename("Suresh_resume.pdf", selected_client_name="Teksystems")
+    print("Result 5:", res5)
+    assert res5["status"] == "valid"
+    assert res5["client_match"] is True
+    assert res5["service_client"] == "Teksystems"
+    assert res5["candidate_name"] == "Suresh"
+    print("✅ Verified Natural Resume auto-inheritance!")
+
+    print("\n--- Test 6: No client selected with Suresh_resume.pdf ---")
+    res6 = parse_resume_filename("Suresh_resume.pdf", selected_client_name=None)
+    print("Result 6:", res6)
+    assert res6["status"] == "needs_review"
+    assert res6["client_match"] is False
+    assert res6["error"] == "Cannot detect ServiceClient from filename"
+    print("✅ Verified Missing Client prompts review!")
 
     print("\n=======================================================")
     print("🎉 ALL STRICT SERVICECLIENT VERIFICATION TESTS PASSED 100%!")

@@ -1,20 +1,20 @@
 """
-ApplyFlow Resume Filename Parser (Strict ServiceClient Filename Verification Only)
+ApplyFlow Resume Filename Parser (Strict ServiceClient Filename Verification)
 
-Filename format:
-ServiceClient_HiringCompany_Role.pdf
-
-Examples:
-- Teksystems_Google_Data Analyst.pdf
-- Infosys_Microsoft_Java Developer.pdf
-- Cognizant_Amazon_QA Engineer.pdf
+Filename formats:
+1. Standard 3-part: ServiceClient_HiringCompany_Role.pdf (e.g. Teksystems_Google_Data Analyst.pdf)
+2. Standard 4-part: ServiceClient_HiringCompany_Role_Candidate.pdf
+3. Natural resumes: Suresh_resume (2).pdf, Suresh_resume.pdf, John_Doe.pdf
 
 Validation Rules (Employee Upload):
-1. Parse filename using '_' as separator.
-2. Extract first segment as ServiceClient.
-3. Compare it with the selected ServiceClient in the upload form.
-4. Ignore Hiring Company and Role validation.
-5. Never compare Hiring Company with ServiceClient.
+- If filename has structured format (ServiceClient_Company_Role):
+  - ServiceClient (segment 0) is strictly compared against selected ServiceClient.
+  - If mismatch -> 'ServiceClient Mismatch' (blocked).
+  - If matching -> 'ServiceClient Verified' (valid).
+- If filename is a natural candidate resume (e.g. Suresh_resume.pdf):
+  - Automatically inherits the selected ServiceClient -> 'ServiceClient Verified' (valid).
+  - If no client selected in form -> 'Cannot detect ServiceClient from filename' (needs review).
+- Company and Role are purely extracted and never block upload.
 """
 
 import re
@@ -81,10 +81,7 @@ def parse_resume_filename(
     all_clients: list[str] | None = None,
 ) -> dict:
     """
-    Strict ServiceClient Filename Verification:
-    - Extracts segment 0 as ServiceClient.
-    - Validates against selected_client_name.
-    - Company and Role are purely extracted without strict validation constraints.
+    Parse resume filename with strict ServiceClient validation.
     """
     stem = Path(filename).stem.strip()
     parts = [p.strip() for p in stem.split('_') if p.strip()]
@@ -92,6 +89,8 @@ def parse_resume_filename(
     raw_first = parts[0] if parts else ""
     norm_first = _normalize_client_name(raw_first)
     norm_selected = _normalize_client_name(selected_client_name) if selected_client_name else ""
+
+    has_noise = any(re.search(r'\b(resume|cv|biodata)\b|[\(\[\{]\d+[\)\]\}]', p, re.IGNORECASE) for p in parts)
 
     service_client = selected_client_name or (format_client_name(raw_first) if raw_first else "ServiceClient")
     company = ""
@@ -102,14 +101,14 @@ def parse_resume_filename(
     error = None
     client_match = True
 
-    # Check for noise in any segment (e.g. resume (3), cv, etc.)
-    has_noise = any(re.search(r'\b(resume|cv|biodata)\b|[\(\[\{]\d+[\)\]\}]', p, re.IGNORECASE) for p in parts)
-
-    # 1. Standard 3-part or 4-part format: ServiceClient_HiringCompany_Role(_Identifier)
-    if len(parts) >= 3 and not has_noise:
+    # 1. Standard structured format without noise (e.g. Teksystems_Google_Data Analyst.pdf, Infosys_Amazon_QA.pdf)
+    if len(parts) >= 2 and not has_noise:
         company = parts[1].upper() if len(parts[1]) <= 4 else parts[1].title()
-        role = format_role_title("_".join(parts[2:] if len(parts) == 3 else parts[2:-1]))
-        candidate_name = _clean_candidate_name(parts[-1] if len(parts) >= 4 else parts[0])
+        if len(parts) >= 3:
+            role = format_role_title("_".join(parts[2:] if len(parts) == 3 else parts[2:-1]))
+            candidate_name = _clean_candidate_name(parts[-1] if len(parts) >= 4 else parts[0])
+        else:
+            candidate_name = _clean_candidate_name(parts[0])
 
         if selected_client_name:
             if norm_first == norm_selected:
@@ -118,6 +117,7 @@ def parse_resume_filename(
                 client_match = True
                 error = None
             else:
+                # First segment is a distinct mismatching client name
                 status = "needs_review"
                 client_match = False
                 error = "ServiceClient Mismatch"
@@ -126,35 +126,17 @@ def parse_resume_filename(
             status = "valid"
             client_match = True
 
-    # 2. 2-segment format without noise (e.g. Teksystems_Google.pdf)
-    elif len(parts) == 2 and not has_noise:
-        company = parts[1].upper() if len(parts[1]) <= 4 else parts[1].title()
-        candidate_name = _clean_candidate_name(parts[0])
-        if selected_client_name:
-            if norm_first == norm_selected:
-                service_client = selected_client_name
-                status = "valid"
-                client_match = True
-                error = None
-            else:
-                status = "needs_review"
-                client_match = False
-                error = "ServiceClient Mismatch"
-        else:
-            service_client = format_client_name(parts[0])
-            status = "valid"
-            client_match = True
-
-    # 3. Non-standard / natural / noisy filenames (e.g. Suresh_resume (3).pdf, John_Doe.pdf)
+    # 2. Natural / Candidate filenames (e.g. Suresh_resume (2).pdf, Suresh_resume.pdf, John_Doe.pdf)
     else:
         candidate_name = _clean_candidate_name(raw_first or stem)
-        if selected_client_name and norm_first == norm_selected and not has_noise:
+        if selected_client_name:
+            # Auto-assign selected ServiceClient
             service_client = selected_client_name
             status = "valid"
             client_match = True
             error = None
         else:
-            service_client = selected_client_name or "ServiceClient"
+            service_client = "ServiceClient"
             status = "needs_review"
             client_match = False
             error = "Cannot detect ServiceClient from filename"
