@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
   Building2,
@@ -32,6 +32,133 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
 import { cn } from '@/utils/cn';
+
+// Memoized Client Card Component
+const ClientCard = React.memo(function ClientCard({
+  client,
+  menuItems,
+}) {
+  const totalResumes = client.total_resumes ?? 0;
+  const totalApps = client.total_applications ?? 0;
+  const assignedEmps = client.assigned_employees || [];
+
+  return (
+    <motion.div
+      whileHover={{ y: -3 }}
+      transition={{ duration: 0.12 }}
+      className={cn(
+        'bg-white rounded-3xl border shadow-card hover:shadow-card-hover transition-all duration-150 p-6 flex flex-col justify-between space-y-6 relative',
+        client.status === 'inactive' ? 'border-[#CBD5E1] bg-[#F8FAFC]/70' :
+        client.status === 'archived' ? 'border-[#E2E8F0] bg-[#FDF4FF]/30' :
+        'border-[#E2E8F0]'
+      )}
+    >
+      {/* Card Header: Client Logo + Name + Status + Three-Dot Menu */}
+      <div>
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <Avatar
+              name={client.company_name}
+              size="lg"
+              variant={client.status === 'active' ? 'blue' : 'navy'}
+            />
+            <div className="min-w-0">
+              <h3 className="text-h3 font-extrabold text-[#081226] truncate">
+                {client.company_name}
+              </h3>
+              <p className="text-caption text-[#64748B] mt-0.5">
+                Contact: <span className="font-semibold text-[#334155]">{client.contact_person || 'Main Contact'}</span>
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <StatusBadge
+              status={client.status === 'archived' ? 'archived' : client.status === 'inactive' ? 'inactive' : 'active'}
+              size="sm"
+            />
+            {menuItems.length > 0 && (
+              <Dropdown
+                trigger={
+                  <button
+                    type="button"
+                    className="p-1.5 rounded-lg text-[#64748B] hover:text-[#081226] hover:bg-[#F1F5F9] transition-colors cursor-pointer"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                }
+                items={menuItems}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Contact strip */}
+        <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] space-y-1 text-caption text-[#64748B]">
+          {client.email && (
+            <div className="flex items-center gap-2 truncate">
+              <Mail className="w-3.5 h-3.5 text-[#94A3B8]" />
+              <span className="truncate">{client.email}</span>
+            </div>
+          )}
+          {client.phone && (
+            <div className="flex items-center gap-2">
+              <Phone className="w-3.5 h-3.5 text-[#94A3B8]" />
+              <span>{client.phone}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Metrics & Deliveries */}
+      <div className="grid grid-cols-2 gap-3 py-2 border-y border-[#F1F5F9]">
+        <div className="p-3 rounded-xl bg-[#EFF6FF]/50 border border-[#BFDBFE]/40 text-center">
+          <p className="text-caption font-bold uppercase text-[#2563EB]">Total Resumes</p>
+          <p className="text-h2 font-extrabold text-[#081226] mt-0.5">{totalResumes}</p>
+        </div>
+
+        <div className="p-3 rounded-xl bg-[#FFF7ED]/60 border border-[#FFEDD5] text-center">
+          <p className="text-caption font-bold uppercase text-[#F97316]">Submissions</p>
+          <p className="text-h2 font-extrabold text-[#081226] mt-0.5">{totalApps}</p>
+        </div>
+      </div>
+
+      {/* Assigned Recruiters Section */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between text-caption font-bold uppercase tracking-wider text-[#64748B]">
+          <span className="flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5 text-[#0D6EFD]" />
+            Assigned Recruiters ({assignedEmps.length})
+          </span>
+        </div>
+
+        {assignedEmps.length === 0 ? (
+          <div className="p-3 rounded-xl bg-[#F8FAFC] border border-dashed border-[#CBD5E1] text-center text-caption text-[#94A3B8]">
+            No recruiters assigned yet.
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {assignedEmps.map((emp) => (
+              <div
+                key={emp.id || emp.employee_id}
+                className={cn(
+                  'px-2.5 py-1 rounded-lg text-caption font-semibold flex items-center gap-1.5 border',
+                  emp.is_primary
+                    ? 'bg-[#EFF6FF] text-[#0D6EFD] border-[#BFDBFE]'
+                    : 'bg-[#F8FAFC] text-[#475569] border-[#E2E8F0]'
+                )}
+              >
+                <Avatar name={emp.name || 'Recruiter'} size="xs" variant={emp.is_primary ? 'blue' : 'navy'} />
+                <span>{emp.name}</span>
+                {emp.is_primary && <span className="text-[10px] uppercase font-bold text-[#0D6EFD]">• Lead</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+});
 
 export function ClientsPage() {
   const { user, isAdmin, isSubAdmin, isEmployee } = useAuth();
@@ -363,152 +490,13 @@ export function ClientsPage() {
       {/* Client Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {clients.map((client) => {
-          const totalResumes = client.total_resumes ?? 0;
-          const totalApps = client.total_applications ?? 0;
-          const assignedEmps = client.assigned_employees || [];
           const menuItems = getActionMenuItems(client);
-
           return (
-            <motion.div
+            <ClientCard
               key={client.id}
-              whileHover={{ y: -3 }}
-              transition={{ duration: 0.12 }}
-              className={cn(
-                'bg-white rounded-3xl border shadow-card hover:shadow-card-hover transition-all duration-150 p-6 flex flex-col justify-between space-y-6 relative',
-                client.status === 'inactive' ? 'border-[#CBD5E1] bg-[#F8FAFC]/70' :
-                client.status === 'archived' ? 'border-[#E2E8F0] bg-[#FDF4FF]/30' :
-                'border-[#E2E8F0]'
-              )}
-            >
-              {/* Card Header: Client Logo + Name + Status + Three-Dot Menu */}
-              <div>
-                <div className="flex items-start justify-between gap-3 mb-4">
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <Avatar
-                      name={client.company_name}
-                      size="lg"
-                      variant={client.status === 'active' ? 'blue' : 'navy'}
-                    />
-                    <div className="min-w-0">
-                      <h3 className="text-h3 font-extrabold text-[#081226] truncate">
-                        {client.company_name}
-                      </h3>
-                      <p className="text-caption text-[#64748B] mt-0.5">
-                        Contact: <span className="font-semibold text-[#334155]">{client.contact_person || 'Main Contact'}</span>
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <StatusBadge
-                      status={client.status === 'archived' ? 'archived' : client.status === 'inactive' ? 'inactive' : 'active'}
-                      size="sm"
-                    />
-                    {menuItems.length > 0 && (
-                      <Dropdown
-                        trigger={
-                          <button
-                            type="button"
-                            className="p-1.5 rounded-lg text-[#64748B] hover:text-[#081226] hover:bg-[#F1F5F9] transition-colors"
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </button>
-                        }
-                        items={menuItems}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {/* Contact strip */}
-                <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] space-y-1 text-caption text-[#64748B]">
-                  {client.email && (
-                    <div className="flex items-center gap-2 truncate">
-                      <Mail className="w-3.5 h-3.5 text-[#94A3B8]" />
-                      <span className="truncate">{client.email}</span>
-                    </div>
-                  )}
-                  {client.phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="w-3.5 h-3.5 text-[#94A3B8]" />
-                      <span>{client.phone}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Metrics & Deliveries */}
-              <div className="grid grid-cols-2 gap-3 py-2 border-y border-[#F1F5F9]">
-                <div className="p-3 rounded-xl bg-[#EFF6FF]/50 border border-[#BFDBFE]/40 text-center">
-                  <p className="text-caption font-bold uppercase text-[#2563EB]">Total Resumes</p>
-                  <p className="text-h2 font-extrabold text-[#081226] mt-0.5">{totalResumes}</p>
-                </div>
-
-                <div className="p-3 rounded-xl bg-[#FFF7ED]/60 border border-[#FFEDD5] text-center">
-                  <p className="text-caption font-bold uppercase text-[#F97316]">Submissions</p>
-                  <p className="text-h2 font-extrabold text-[#081226] mt-0.5">{totalApps}</p>
-                </div>
-              </div>
-
-              {/* Assigned Recruiters Section */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
-                    Assigned Recruiters ({assignedEmps.length})
-                  </p>
-                  {(isAdmin || isSubAdmin) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedClient(client);
-                        setIsAssignOpen(true);
-                      }}
-                      className="text-caption font-semibold text-[#2563EB] hover:underline cursor-pointer"
-                    >
-                      + Assign
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-1.5">
-                  {assignedEmps.length === 0 ? (
-                    <p className="text-caption text-[#94A3B8] italic">No recruiters assigned yet</p>
-                  ) : (
-                    assignedEmps.map((emp, idx) => (
-                      <div
-                        key={emp.id || idx}
-                        className="p-2 rounded-lg bg-[#F8FAFC] flex items-center justify-between text-small"
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Avatar name={emp.name || 'Recruiter'} size="xs" variant="blue" />
-                          <span className="font-bold text-[#081226] text-caption truncate">
-                            {emp.name || 'Recruiter'}
-                          </span>
-                        </div>
-                        <StatusBadge
-                          status={emp.is_primary ? 'primary' : 'supporting'}
-                          size="sm"
-                          showDot={false}
-                        />
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Action Link */}
-              <div className="pt-2">
-                <Button
-                  variant="outline"
-                  size="md"
-                  onClick={() => (window.location.href = `/candidates?client_id=${client.id}`)}
-                  className="w-full justify-between"
-                >
-                  <span>Candidate Pool</span>
-                  <ExternalLink className="w-4 h-4 text-[#94A3B8]" />
-                </Button>
-              </div>
-            </motion.div>
+              client={client}
+              menuItems={menuItems}
+            />
           );
         })}
       </div>

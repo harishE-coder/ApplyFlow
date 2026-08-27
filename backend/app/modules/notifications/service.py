@@ -9,6 +9,9 @@ from app.modules.notifications.models import Notification
 from app.modules.notifications.schemas import NotificationResponse, NotificationListResponse
 
 
+from app.core.cache import cache, invalidate_notifications_cache
+
+
 async def create_notification(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -24,12 +27,19 @@ async def create_notification(
     )
     db.add(notif)
     await db.flush()
+    invalidate_notifications_cache()
     return notif
 
 
 async def get_user_notifications(
     db: AsyncSession, user: User, limit: int = 20
 ) -> NotificationListResponse:
+    cache_key = f"notif:{str(user.id)}:{limit}"
+    cached = cache.get(cache_key)
+    if cached:
+        print(f"\033[92m[CACHE HIT] Notifications ({cache_key})\033[0m")
+        return cached
+
     query = (
         select(Notification)
         .where(Notification.user_id == user.id)
@@ -39,19 +49,14 @@ async def get_user_notifications(
     result = await db.execute(query)
     items = result.scalars().all()
 
-    unread_count = (
-        await db.execute(
-            select(func.count(Notification.id)).where(
-                Notification.user_id == user.id,
-                Notification.is_read == False,
-            )
-        )
-    ).scalar() or 0
+    unread_count = sum(1 for n in items if not n.is_read)
 
-    return NotificationListResponse(
+    resp = NotificationListResponse(
+        items=[NotificationResponse.model_validate(n) for n in items],
         unread_count=unread_count,
-        items=[NotificationResponse.model_validate(it) for it in items],
     )
+    cache.set(cache_key, resp, ttl=15.0, tags={"notifications"})
+    return resp
 
 
 async def mark_as_read(db: AsyncSession, user: User, notification_id: uuid.UUID) -> bool:
@@ -61,6 +66,7 @@ async def mark_as_read(db: AsyncSession, user: User, notification_id: uuid.UUID)
         .values(is_read=True)
     )
     await db.flush()
+    invalidate_notifications_cache()
     return True
 
 
@@ -71,6 +77,7 @@ async def mark_all_as_read(db: AsyncSession, user: User) -> int:
         .values(is_read=True)
     )
     await db.flush()
+    invalidate_notifications_cache()
     return result.rowcount
 
 

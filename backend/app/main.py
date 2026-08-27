@@ -45,7 +45,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown events."""
     print("🚀 Apply Flow Careers API starting...")
     import sqlalchemy
-    from app.core.database import engine, Base
+    from app.core.database import engine, Base, warmup_db_pool
+
+    await warmup_db_pool()
 
     if "sqlite" in settings.database_url:
         async with engine.begin() as conn:
@@ -226,12 +228,17 @@ async def lifespan(app: FastAPI):
     print("👋 Apply Flow Careers API shutting down...")
 
 
+from app.core.profiler import ProfilerMiddleware
+
 app = FastAPI(
     title="Apply Flow Careers API",
     description="Internal recruitment agency platform",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# ---- Query & Response Profiler Telemetry ----
+app.add_middleware(ProfilerMiddleware)
 
 # ---- CORS ----
 app.add_middleware(

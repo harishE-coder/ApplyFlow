@@ -1,0 +1,58 @@
+import React from 'react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from 'recharts';
+
+export const EmployeeCharts = React.memo(function EmployeeCharts({ weeklyTrend = [] }) {
+  return (
+    <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-h3 font-bold text-[#081226]">
+            My 7-Day Performance Trends
+          </h3>
+          <p className="text-caption text-[#64748B] mt-0.5">
+            Personal candidate upload volume and application output.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 text-caption font-semibold">
+          <span className="flex items-center gap-1.5 text-[#0D6EFD]">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#0D6EFD]" />
+            Uploads
+          </span>
+          <span className="flex items-center gap-1.5 text-[#FF8A00]">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#FF8A00]" />
+            Applications
+          </span>
+        </div>
+      </div>
+
+      <div className="h-60 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={weeklyTrend}>
+            <XAxis dataKey="date" stroke="#94A3B8" fontSize={12} />
+            <YAxis stroke="#94A3B8" fontSize={12} />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: '#081226',
+                borderRadius: '12px',
+                border: '1px solid #1E2E4E',
+                color: '#FFF',
+              }}
+            />
+            <Bar dataKey="uploads" name="Uploads" fill="#0D6EFD" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="applications" name="Applications" fill="#FF8A00" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+});
+
+export default EmployeeCharts;

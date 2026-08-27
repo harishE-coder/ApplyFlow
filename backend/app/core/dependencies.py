@@ -60,6 +60,15 @@ async def get_current_user(
             detail="Invalid token payload",
         )
 
+    # Fast memory cache check
+    cached = _user_cache.get(str(user_id))
+    if cached:
+        cached_expires, cached_user = cached
+        if time.time() < cached_expires:
+            return cached_user
+        else:
+            _user_cache.pop(str(user_id), None)
+
     result = await db.execute(
         select(User).where(User.id == UUID(user_id), User.is_active == True)  # noqa: E712
     )
@@ -70,6 +79,9 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive",
         )
+
+    # Cache for 30 seconds
+    _user_cache[str(user_id)] = (time.time() + 30.0, user)
 
     return user
 

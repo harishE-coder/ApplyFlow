@@ -22,6 +22,7 @@ from app.modules.resumes.schemas import (
     UploadDashboardStats,
 )
 from app.services.google_drive import drive_service, UPLOAD_DIR
+from app.core.cache import invalidate_dashboard_cache
 
 
 def _parse_to_date(val) -> date | None:
@@ -345,6 +346,7 @@ async def delete_resume(db: AsyncSession, resume_id: uuid.UUID, current_user: Us
         )
     )
     await db.flush()
+    invalidate_dashboard_cache()
 
     return {"message": "Resume deleted successfully from database and Google Drive."}
 
@@ -699,6 +701,7 @@ async def process_bulk_upload(
 
         db.add_all(entities_to_add)
         await db.flush()
+        invalidate_dashboard_cache()
 
     # Auto-Sync Notifications & Dashboard Telemetry
     dash_stats = None

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChatRoomList } from './ChatRoomList';
 import { ChatWindow } from './ChatWindow';
 import { useChatWebSocket } from './useChatWebSocket';
@@ -21,15 +21,16 @@ export function ChatPage() {
       const res = await api.get('/chat/rooms');
       const items = res.data.items || [];
       setRooms(items);
-      if (items.length > 0 && !activeRoomId && window.innerWidth >= 768) {
-        setActiveRoomId(items[0].id);
-      }
+      setActiveRoomId((prev) => {
+        if (prev) return prev;
+        return (items.length > 0 && window.innerWidth >= 768) ? items[0].id : null;
+      });
     } catch (err) {
       console.error('Failed to fetch chat rooms:', err);
     } finally {
       setLoadingRooms(false);
     }
-  }, [activeRoomId]);
+  }, []);
 
   useEffect(() => {
     fetchRooms();
@@ -106,7 +107,7 @@ export function ChatPage() {
   });
 
   // Action handlers
-  const handleSendMessage = async (text) => {
+  const handleSendMessage = useCallback(async (text) => {
     if (!activeRoomId || !text.trim()) return;
     try {
       const res = await api.post(`/chat/rooms/${activeRoomId}/messages`, { message: text.trim() });
@@ -131,9 +132,9 @@ export function ChatPage() {
       console.error('Failed to send message:', err);
       toastError('Failed to send message');
     }
-  };
+  }, [activeRoomId, toastError]);
 
-  const handleUploadAttachment = async (file) => {
+  const handleUploadAttachment = useCallback(async (file) => {
     if (!activeRoomId || !file) return;
     const formData = new FormData();
     formData.append('file', file);
@@ -146,9 +147,9 @@ export function ChatPage() {
       console.error('Failed to upload attachment:', err);
       toastError('Failed to upload file');
     }
-  };
+  }, [activeRoomId, toastError, toastSuccess]);
 
-  const handleShareResume = async (resumeId) => {
+  const handleShareResume = useCallback(async (resumeId) => {
     if (!activeRoomId || !resumeId) return;
     try {
       const res = await api.post(`/chat/rooms/${activeRoomId}/share-resume`, { resume_id: resumeId });
@@ -159,9 +160,9 @@ export function ChatPage() {
       console.error('Failed to share resume:', err);
       toastError('Failed to share resume');
     }
-  };
+  }, [activeRoomId, toastError, toastSuccess]);
 
-  const handleDeleteMessage = async (messageId) => {
+  const handleDeleteMessage = useCallback(async (messageId) => {
     try {
       await api.delete(`/chat/messages/${messageId}`);
       setMessages((prev) =>
@@ -172,14 +173,16 @@ export function ChatPage() {
       console.error('Failed to delete message:', err);
       toastError('Failed to delete message');
     }
-  };
+  }, [toastError, toastSuccess]);
 
-  const handleSelectRoom = (roomId) => {
+  const handleSelectRoom = useCallback((roomId) => {
     setActiveRoomId(roomId);
     setIsMobileViewingChat(true);
-  };
+  }, []);
 
-  const activeRoom = rooms.find((r) => r.id === activeRoomId) || null;
+  const activeRoom = useMemo(() => {
+    return rooms.find((r) => r.id === activeRoomId) || null;
+  }, [rooms, activeRoomId]);
 
   return (
     <div className="h-[calc(100vh-100px)] sm:h-[calc(100vh-130px)] min-h-[480px] flex rounded-2xl sm:rounded-3xl overflow-hidden border border-[#CBD5E1] shadow-xl bg-white relative">

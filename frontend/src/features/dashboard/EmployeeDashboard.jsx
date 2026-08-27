@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -20,35 +20,29 @@ import {
   Mail,
   Calendar,
 } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-} from 'recharts';
 import { Button } from '@/components/ui/Button';
 import { KPICard } from '@/components/ui/KPICard';
 import { ProgressRing } from '@/components/ui/ProgressRing';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
 import { UploadDropzone } from '@/components/ui/UploadDropzone';
 import { DateFilter } from '@/components/ui/DateFilter';
+import { ChartSkeleton } from '@/components/ui/ChartSkeleton';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
 import { formatDate, formatRelativeTime, cn } from '@/utils/cn';
 
+const EmployeeCharts = lazy(() => import('./charts/EmployeeCharts'));
+
 export function EmployeeDashboard() {
-  const { user } = useAuth();
+  const { user, bootstrapData } = useAuth();
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
 
-  const [loading, setLoading] = useState(true);
-  const [data, setData] = useState(null);
-  const [assignedClients, setAssignedClients] = useState([]);
+  const initialHome = bootstrapData?.dashboard;
+  const [loading, setLoading] = useState(() => !initialHome?.dashboard && !initialHome);
+  const [data, setData] = useState(() => initialHome?.dashboard || initialHome || null);
+  const [assignedClients, setAssignedClients] = useState(() => initialHome?.assigned_clients || []);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [dateRange, setDateRange] = useState('today');
   const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
@@ -58,8 +52,21 @@ export function EmployeeDashboard() {
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  const hasConsumedBootstrapRef = useRef(Boolean(initialHome));
+
+  useEffect(() => {
+    if (bootstrapData?.dashboard && !data) {
+      const home = bootstrapData.dashboard;
+      if (home.dashboard) setData(home.dashboard);
+      else setData(home);
+      if (home.assigned_clients?.length) setAssignedClients(home.assigned_clients);
+      setLoading(false);
+      hasConsumedBootstrapRef.current = true;
+    }
+  }, [bootstrapData, data]);
+
   // Fetch employee dashboard data
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
@@ -87,16 +94,23 @@ export function EmployeeDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedClientId, dateRange, customDate, toastError]);
 
   useEffect(() => {
+    if (hasConsumedBootstrapRef.current && !selectedClientId && dateRange === 'today') {
+      hasConsumedBootstrapRef.current = false;
+      return;
+    }
     fetchData();
-  }, [selectedClientId, dateRange, customDate]);
+  }, [fetchData, selectedClientId, dateRange]);
 
-  // Real-time listener for resume uploads, applications, and emails to update dashboard instantly
+  // Real-time listener with stable ref to prevent re-attaching
+  const fetchDataRef = useRef(fetchData);
+  fetchDataRef.current = fetchData;
+
   useEffect(() => {
     const handleRefreshEvent = () => {
-      fetchData();
+      fetchDataRef.current();
     };
     window.addEventListener('resume-uploaded', handleRefreshEvent);
     window.addEventListener('application-created', handleRefreshEvent);
@@ -109,7 +123,7 @@ export function EmployeeDashboard() {
       window.removeEventListener('application-updated', handleRefreshEvent);
       window.removeEventListener('email-processed', handleRefreshEvent);
     };
-  }, [selectedClientId, dateRange]);
+  }, []);
 
   // Live timer for active attendance session
   useEffect(() => {
@@ -131,15 +145,15 @@ export function EmployeeDashboard() {
     };
   }, [attendance]);
 
-  const formatTimer = (seconds) => {
+  const formatTimer = useCallback((seconds) => {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
     return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
+  }, []);
 
   // Toggle Attendance
-  const handleToggleAttendance = async () => {
+  const handleToggleAttendance = useCallback(async () => {
     setAttendanceLoading(true);
     try {
       if (attendance?.is_active) {
@@ -156,31 +170,26 @@ export function EmployeeDashboard() {
     } finally {
       setAttendanceLoading(false);
     }
-  };
+  }, [attendance, success, toastError]);
 
-  const handleDropResumes = (files) => {
+  const handleDropResumes = useCallback((files) => {
     navigate('/upload', { state: { initialFiles: files, client_id: selectedClientId } });
-  };
-
-  const datePills = [
-    { id: 'today', label: 'Today' },
-    { id: 'yesterday', label: 'Yesterday' },
-    { id: 'this_week', label: 'This Week' },
-    { id: 'this_month', label: 'This Month' },
-  ];
+  }, [navigate, selectedClientId]);
 
   const todayUploads = data?.today_uploads ?? 0;
 
   // Single Source of Truth: always use the backend-computed target_summary.
-  // Never calculate target/submitted/remaining/completion on the frontend.
-  const summary = data?.target_summary ?? {
-    target: 0,
-    submitted: 0,
-    remaining: 0,
-    completion: 0,
-  };
+  const summary = useMemo(() => {
+    return data?.target_summary ?? {
+      target: 0,
+      submitted: 0,
+      remaining: 0,
+      completion: 0,
+    };
+  }, [data?.target_summary]);
 
-  const getTargetColor = (completion) => {
+  const targetColor = useMemo(() => {
+    const completion = summary.completion;
     if (completion >= 100) {
       return {
         hex: '#16A34A',
@@ -206,9 +215,7 @@ export function EmployeeDashboard() {
       badgeBorder: 'border-[#FECACA]',
       variant: 'danger',
     };
-  };
-
-  const targetColor = getTargetColor(summary.completion);
+  }, [summary.completion]);
 
   if (loading && !data) {
     return <BrandedLoader size="lg" label="Loading Recruiter Workspace..." />;
@@ -391,49 +398,10 @@ export function EmployeeDashboard() {
             <UploadDropzone onFilesSelected={handleDropResumes} />
           </div>
 
-          {/* 2. Employee Charts (Upload Trend & Application Trend) */}
-          <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-6 space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-h3 font-bold text-[#081226]">
-                  My 7-Day Performance Trends
-                </h3>
-                <p className="text-caption text-[#64748B] mt-0.5">
-                  Personal candidate upload volume and application output.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3 text-caption font-semibold">
-                <span className="flex items-center gap-1.5 text-[#0D6EFD]">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#0D6EFD]" />
-                  Uploads
-                </span>
-                <span className="flex items-center gap-1.5 text-[#FF8A00]">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#FF8A00]" />
-                  Applications
-                </span>
-              </div>
-            </div>
-
-            <div className="h-60 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data?.weekly_trend || []}>
-                  <XAxis dataKey="date" stroke="#94A3B8" fontSize={12} />
-                  <YAxis stroke="#94A3B8" fontSize={12} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#081226',
-                      borderRadius: '12px',
-                      border: '1px solid #1E2E4E',
-                      color: '#FFF',
-                    }}
-                  />
-                  <Bar dataKey="uploads" name="Uploads" fill="#0D6EFD" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="applications" name="Applications" fill="#FF8A00" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+          {/* 2. Employee Charts (Lazy-Loaded Background Rendering) */}
+          <Suspense fallback={<ChartSkeleton className="h-60" title="My 7-Day Performance Trends" />}>
+            <EmployeeCharts weeklyTrend={data?.weekly_trend || []} />
+          </Suspense>
 
           {/* 3. Active Job Requirements Matrix */}
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-6">

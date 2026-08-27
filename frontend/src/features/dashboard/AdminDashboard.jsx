@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Building2,
@@ -26,21 +26,6 @@ import {
   Mail,
 } from 'lucide-react';
 import { useAuth } from '@/features/auth/AuthContext';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
-  CartesianGrid,
-} from 'recharts';
 import { KPICard } from '@/components/ui/KPICard';
 import { Avatar } from '@/components/ui/Avatar';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
@@ -48,18 +33,30 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Table } from '@/components/ui/Table';
 import { Button } from '@/components/ui/Button';
 import { DateFilter } from '@/components/ui/DateFilter';
+import { ChartSkeleton } from '@/components/ui/ChartSkeleton';
 import { useToast } from '@/components/ui/Toast';
 import api from '@/services/api';
 import { formatDate, formatRelativeTime, cn } from '@/utils/cn';
 
+// Lazy-loaded Charts Subcomponent
+const AdminCharts = lazy(() => import('./charts/AdminCharts'));
+
+function hashString(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
+  return Math.abs(hash);
+}
+
 export function AdminDashboard() {
-  const { isAdmin, isSubAdmin } = useAuth();
+  const { isAdmin, isSubAdmin, bootstrapData } = useAuth();
   const { error: toastError } = useToast();
-  const [loading, setLoading] = useState(true);
+
+  const initialHome = bootstrapData?.dashboard;
+  const [loading, setLoading] = useState(() => !initialHome);
 
   // 1. Reactive Top Filters
-  const [clients, setClients] = useState([]);
-  const [allEmployees, setAllEmployees] = useState([]);
+  const [clients, setClients] = useState(() => initialHome?.clients || []);
+  const [allEmployees, setAllEmployees] = useState(() => initialHome?.all_employees || []);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Single Date Picker
@@ -69,11 +66,30 @@ export function AdminDashboard() {
   const [sortOption, setSortOption] = useState('highest'); // 'highest' | 'lowest' | 'remaining'
 
   // Data States
-  const [overview, setOverview] = useState(null);
-  const [clientCards, setClientCards] = useState([]);
-  const [teamPerformance, setTeamPerformance] = useState([]);
-  const [allTargets, setAllTargets] = useState([]);
-  const [attendanceSummary, setAttendanceSummary] = useState(null);
+  const [overview, setOverview] = useState(() => initialHome?.overview || null);
+  const [clientCards, setClientCards] = useState(() => initialHome?.client_cards || []);
+  const [teamPerformance, setTeamPerformance] = useState(() => initialHome?.team_performance || []);
+  const [allTargets, setAllTargets] = useState(() => initialHome?.all_targets || []);
+  const [attendanceSummary, setAttendanceSummary] = useState(() => initialHome?.attendance_summary || null);
+
+  // Track bootstrap data initial consumption to skip duplicate cold fetch
+  const hasConsumedBootstrapRef = useRef(Boolean(initialHome));
+
+  // Sync if bootstrapData arrives asynchronously
+  useEffect(() => {
+    if (bootstrapData?.dashboard && !overview) {
+      const home = bootstrapData.dashboard;
+      if (home.overview) setOverview(home.overview);
+      if (home.team_performance) setTeamPerformance(home.team_performance);
+      if (home.attendance_summary) setAttendanceSummary(home.attendance_summary);
+      if (home.client_cards) setClientCards(home.client_cards);
+      if (home.clients?.length) setClients(home.clients);
+      if (home.all_employees?.length) setAllEmployees(home.all_employees);
+      if (home.all_targets?.length) setAllTargets(home.all_targets);
+      setLoading(false);
+      hasConsumedBootstrapRef.current = true;
+    }
+  }, [bootstrapData, overview]);
 
   // Cascading Employee list based on selected client
   const availableEmployees = useMemo(() => {
@@ -83,7 +99,7 @@ export function AdminDashboard() {
     );
   }, [selectedClientId, allEmployees]);
 
-  const handleClientChange = (newClientId) => {
+  const handleClientChange = useCallback((newClientId) => {
     setSelectedClientId(newClientId);
     if (newClientId) {
       const stillValid = allEmployees.some(
@@ -93,9 +109,9 @@ export function AdminDashboard() {
       );
       if (!stillValid) setSelectedEmployeeId('');
     }
-  };
+  }, [allEmployees, selectedEmployeeId]);
 
-  const handleQuickDateSelect = (filterKey) => {
+  const handleQuickDateSelect = useCallback((filterKey) => {
     setQuickDateFilter(filterKey);
     const today = new Date();
     if (filterKey === 'today') {
@@ -105,9 +121,9 @@ export function AdminDashboard() {
       yesterday.setDate(yesterday.getDate() - 1);
       setSelectedDate(yesterday.toISOString().split('T')[0]);
     }
-  };
+  }, []);
 
-  const handleDateInput = (dateStr) => {
+  const handleDateInput = useCallback((dateStr) => {
     setSelectedDate(dateStr);
     const todayStr = new Date().toISOString().split('T')[0];
     const yesterday = new Date();
@@ -121,10 +137,10 @@ export function AdminDashboard() {
     } else {
       setQuickDateFilter('custom');
     }
-  };
+  }, []);
 
   // Fetch all dashboard data and metadata in 1 consolidated roundtrip
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
@@ -155,20 +171,28 @@ export function AdminDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedClientId, selectedEmployeeId, quickDateFilter, selectedDate, toastError]);
 
   useEffect(() => {
+    // Skip duplicate network request on initial mount if bootstrap data was already consumed
+    if (hasConsumedBootstrapRef.current && !selectedClientId && !selectedEmployeeId && quickDateFilter === 'today') {
+      hasConsumedBootstrapRef.current = false;
+      return;
+    }
     fetchData();
-  }, [selectedClientId, selectedEmployeeId, selectedDate, quickDateFilter]);
+  }, [fetchData, selectedClientId, selectedEmployeeId, quickDateFilter]);
 
-  // Real-time listener for resume uploads to update admin metrics instantly without page reload
+  // Real-time listener for resume uploads with stable ref to prevent re-attaching
+  const fetchDataRef = useRef(fetchData);
+  fetchDataRef.current = fetchData;
+
   useEffect(() => {
     const handleUploadEvent = () => {
-      fetchData();
+      fetchDataRef.current();
     };
     window.addEventListener('resume-uploaded', handleUploadEvent);
     return () => window.removeEventListener('resume-uploaded', handleUploadEvent);
-  }, [selectedClientId, selectedEmployeeId, selectedDate, quickDateFilter]);
+  }, []);
 
   // Selected Client Entity
   const currentClient = useMemo(() => {
@@ -335,12 +359,6 @@ export function AdminDashboard() {
       color: cfg.color,
     })).filter((it) => it.value >= 0);
   }, [overview]);
-
-  function hashString(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
-    return Math.abs(hash);
-  }
 
   if (loading && !overview) {
     return <BrandedLoader size="lg" label="Loading Executive Operations & Target Analytics..." />;
@@ -720,283 +738,31 @@ export function AdminDashboard() {
         </div>
       </div>
 
-      {/* 4. FOUR INTERACTIVE TARGET ANALYTICS CHARTS */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Chart 1: Daily Target vs Applications (Bar Chart) (Col span 6) */}
-        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-h3 font-bold text-[#081226]">
-                1. Daily Target vs Applications
-              </h3>
-              <p className="text-caption text-[#64748B] mt-0.5">
-                Recruiter goal vs actual submissions for {formatDate(selectedDate)}.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3 text-caption font-semibold">
-              <span className="flex items-center gap-1 text-[#64748B]">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#CBD5E1]" /> Target
-              </span>
-              <span className="flex items-center gap-1 text-[#0D6EFD]">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#0D6EFD]" /> Submitted
-              </span>
-            </div>
+      {/* 4. FOUR INTERACTIVE TARGET ANALYTICS CHARTS (Lazy-Loaded Background Rendering) */}
+      <Suspense
+        fallback={
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <ChartSkeleton className="lg:col-span-6 h-64" title="1. Daily Target vs Applications" />
+            <ChartSkeleton className="lg:col-span-6 h-64" title="2. Target Completion Trend" />
+            <ChartSkeleton className="lg:col-span-6 h-64" title="3. Client Performance Comparison" />
+            <ChartSkeleton className="lg:col-span-6 h-64" title="4. Application Pipeline Distribution" />
+            <ChartSkeleton className="lg:col-span-12 h-64" title="5. Daily Application Events" />
           </div>
-
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={targetVsAppsData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-                <XAxis dataKey="employee" stroke="#94A3B8" fontSize={12} />
-                <YAxis stroke="#94A3B8" fontSize={12} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#081226',
-                    borderRadius: '12px',
-                    border: '1px solid #1E2E4E',
-                    color: '#FFF',
-                  }}
-                />
-                <Bar dataKey="target" name="Daily Target" fill="#CBD5E1" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="submitted" name="Applications Submitted" fill="#0D6EFD" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Chart 2: Target Completion Trend (7-Day Line Chart) (Col span 6) */}
-        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-h3 font-bold text-[#081226]">
-                2. Target Completion Trend (7 Days)
-              </h3>
-              <p className="text-caption text-[#64748B] mt-0.5">
-                Daily completion consistency over the last seven days.
-              </p>
-            </div>
-
-            <span className="text-caption font-bold px-2 py-0.5 rounded-full bg-[#F0FDF4] text-[#16A34A]">
-              100% Benchmark
-            </span>
-          </div>
-
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={completionTrendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-                <XAxis dataKey="day" stroke="#94A3B8" fontSize={12} />
-                <YAxis domain={[0, 120]} stroke="#94A3B8" fontSize={12} unit="%" />
-                <Tooltip
-                  formatter={(val) => [`${val}%`, 'Completion']}
-                  contentStyle={{
-                    backgroundColor: '#081226',
-                    borderRadius: '12px',
-                    border: '1px solid #1E2E4E',
-                    color: '#FFF',
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="completion"
-                  stroke="#FF8A00"
-                  strokeWidth={3}
-                  dot={{ r: 5, fill: '#FF8A00', strokeWidth: 2, stroke: '#FFF' }}
-                  activeDot={{ r: 7 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Chart 3: Client Performance Comparison (Available when 'All Clients' selected) (Col span 6) */}
-        {!selectedClientId ? (
-          <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-h3 font-bold text-[#081226]">
-                  3. Client Performance Comparison
-                </h3>
-                <p className="text-caption text-[#64748B] mt-0.5">
-                  Completion percentage by Service Client account.
-                </p>
-              </div>
-              <span className="text-caption font-bold text-[#0D6EFD]">All Clients View</span>
-            </div>
-
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart layout="vertical" data={clientComparisonData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
-                  <XAxis type="number" domain={[0, 120]} stroke="#94A3B8" fontSize={12} unit="%" />
-                  <YAxis type="category" dataKey="client" stroke="#94A3B8" fontSize={12} width={100} />
-                  <Tooltip
-                    formatter={(val) => [`${val}%`, 'Completion']}
-                    contentStyle={{
-                      backgroundColor: '#081226',
-                      borderRadius: '12px',
-                      border: '1px solid #1E2E4E',
-                      color: '#FFF',
-                    }}
-                  />
-                  <Bar dataKey="completion" fill="#16A34A" radius={[0, 6, 6, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        ) : (
-          /* Client Detail Highlight when specific client is selected */
-          <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F1F5F9]">
-              <div className="flex items-center gap-3">
-                <Avatar name={currentClient?.company_name || 'Client'} size="md" variant="blue" />
-                <div>
-                  <h3 className="text-h3 font-bold text-[#081226]">{currentClient?.company_name}</h3>
-                  <p className="text-caption text-[#64748B]">Client-Specific Target Telemetry</p>
-                </div>
-              </div>
-              <span className="text-caption font-bold px-2.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#0D6EFD]">
-                Account Scoped
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 py-2">
-              <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-center">
-                <p className="text-caption font-bold uppercase text-[#64748B]">Target Quota</p>
-                <p className="text-h2 font-extrabold text-[#081226] mt-0.5">{totalDailyTarget}</p>
-              </div>
-              <div className="p-3.5 rounded-xl bg-[#EFF6FF]/60 border border-[#BFDBFE] text-center">
-                <p className="text-caption font-bold uppercase text-[#0D6EFD]">Submitted</p>
-                <p className="text-h2 font-extrabold text-[#0D6EFD] mt-0.5">{applicationsSubmitted}</p>
-              </div>
-            </div>
-
-            <p className="text-caption text-[#475569] leading-relaxed">
-              Assigned recruiters for {currentClient?.company_name}:{' '}
-              <strong className="text-[#081226]">
-                {availableEmployees.map((e) => e.name).join(', ') || 'Recruiter Assigned'}
-              </strong>
-            </p>
-          </div>
-        )}
-
-        {/* Chart 4: Application Status Distribution (Donut / Pie) (Col span 6) */}
-        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4 flex flex-col justify-between">
-          <div>
-            <h3 className="text-h3 font-bold text-[#081226]">
-              4. Application Pipeline Distribution
-            </h3>
-            <p className="text-caption text-[#64748B] mt-0.5">
-              Live submission mix across all candidate review stages.
-            </p>
-          </div>
-
-          <div className="h-56 w-full flex items-center justify-center">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={statusDistributionData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={80}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {statusDistributionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#081226',
-                    borderRadius: '12px',
-                    border: '1px solid #1E2E4E',
-                    color: '#FFF',
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Status color legend */}
-          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#F1F5F9]">
-            {statusDistributionData.map((item) => (
-              <div key={item.name} className="flex items-center gap-1.5 text-caption">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                <span className="text-[#475569] truncate font-medium">{item.name}:</span>
-                <span className="font-bold text-[#081226]">{item.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Chart 5: Daily Application Events (New vs Follow-up Updates) (Col span 12) */}
-        <div className="lg:col-span-12 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#F1F5F9]">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#2563EB] px-2.5 py-0.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE]">
-                  AI Email Intake
-                </span>
-                <h3 className="text-h3 font-bold text-[#081226]">
-                  5. Daily Application Events (New Applications vs Follow-up Updates)
-                </h3>
-              </div>
-              <p className="text-caption text-[#64748B] mt-0.5">
-                Recruiter positive response volume: newly created candidate records vs progression rounds.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-caption font-semibold">
-                <span className="flex items-center gap-1 text-[#2563EB]">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" /> New Applications
-                </span>
-                <span className="flex items-center gap-1 text-[#F97316]">
-                  <span className="w-2.5 h-2.5 rounded-full bg-[#F97316]" /> Follow-up Updates
-                </span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                icon={Mail}
-                onClick={() => (window.location.href = '/applications')}
-                className="h-[36px] text-xs font-bold text-[#2563EB] border-[#BFDBFE] hover:bg-[#EFF6FF]"
-              >
-                Open Applications →
-              </Button>
-            </div>
-          </div>
-
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={[
-                { day: 'Mon', new: 8, followup: 4 },
-                { day: 'Tue', new: 10, followup: 6 },
-                { day: 'Wed', new: 7, followup: 9 },
-                { day: 'Thu', new: 12, followup: 5 },
-                { day: 'Fri', new: 9, followup: 8 },
-              ]}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-                <XAxis dataKey="day" stroke="#94A3B8" fontSize={12} />
-                <YAxis stroke="#94A3B8" fontSize={12} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#081226',
-                    borderRadius: '12px',
-                    border: '1px solid #1E2E4E',
-                    color: '#FFF',
-                  }}
-                />
-                <Bar dataKey="new" name="New Applications" fill="#2563EB" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="followup" name="Follow-up Updates" fill="#F97316" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
+        }
+      >
+        <AdminCharts
+          targetVsAppsData={targetVsAppsData}
+          completionTrendData={completionTrendData}
+          clientComparisonData={clientComparisonData}
+          statusDistributionData={statusDistributionData}
+          selectedClientId={selectedClientId}
+          currentClient={currentClient}
+          totalDailyTarget={totalDailyTarget}
+          applicationsSubmitted={applicationsSubmitted}
+          availableEmployees={availableEmployees}
+          selectedDate={selectedDate}
+        />
+      </Suspense>
     </div>
   );
 }

@@ -454,6 +454,9 @@ async def get_employee_performance_list(
 ) -> list[EmployeePerformance]:
     """Get list of employees with real-time performance telemetry scoped by user role."""
     today_date = date.today()
+    res_sub = select(Resume.uploaded_by, func.count(Resume.id).label("uploads_cnt")).group_by(Resume.uploaded_by).subquery()
+    app_sub = select(Application.employee_id, func.count(Application.id).label("apps_cnt")).group_by(Application.employee_id).subquery()
+    tgt_sub = select(Target.employee_id, func.sum(Target.daily_target).label("target_sum")).where(Target.effective_date <= today_date, Target.status == "active").group_by(Target.employee_id).subquery()
 
     query = (
         select(
@@ -463,10 +466,13 @@ async def get_employee_performance_list(
             User.phone,
             User.status,
             User.is_active,
-            func.coalesce(select(func.count(Resume.id)).where(Resume.uploaded_by == User.id).correlate(User).scalar_subquery(), 0).label("total_uploads"),
-            func.coalesce(select(func.count(Application.id)).where(Application.employee_id == User.id).correlate(User).scalar_subquery(), 0).label("total_apps"),
-            func.coalesce(select(func.sum(Target.daily_target)).where(Target.employee_id == User.id, Target.effective_date <= today_date, Target.status == "active").correlate(User).scalar_subquery(), 25).label("daily_target"),
+            func.coalesce(res_sub.c.uploads_cnt, 0).label("total_uploads"),
+            func.coalesce(app_sub.c.apps_cnt, 0).label("total_apps"),
+            func.coalesce(tgt_sub.c.target_sum, 25).label("daily_target"),
         )
+        .outerjoin(res_sub, res_sub.c.uploaded_by == User.id)
+        .outerjoin(app_sub, app_sub.c.employee_id == User.id)
+        .outerjoin(tgt_sub, tgt_sub.c.employee_id == User.id)
         .where(User.role == "employee")
         .order_by(User.name)
     )

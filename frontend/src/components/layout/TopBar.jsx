@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Menu,
   Search,
@@ -29,6 +30,7 @@ export function TopBar({
 }) {
   const { user, logout, isEmployee, isAdmin, isSubAdmin } = useAuth();
   const { success, error } = useToast();
+  const navigate = useNavigate();
 
   const [attendance, setAttendance] = useState(null);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
@@ -43,7 +45,7 @@ export function TopBar({
     }
   }, [isEmployee]);
 
-  const handleToggleAttendance = async () => {
+  const handleToggleAttendance = useCallback(async () => {
     setAttendanceLoading(true);
     try {
       if (attendance?.is_active) {
@@ -60,11 +62,11 @@ export function TopBar({
     } finally {
       setAttendanceLoading(false);
     }
-  };
+  }, [attendance, error, success]);
 
-  const todayStr = formatDate(new Date());
+  const todayStr = useMemo(() => formatDate(new Date()), []);
 
-  const profileMenuItems = [
+  const profileMenuItems = useMemo(() => [
     {
       label: user?.name || 'Recruiter Account',
       icon: User,
@@ -79,7 +81,7 @@ export function TopBar({
       danger: true,
       onClick: logout,
     },
-  ];
+  ], [user?.name, logout]);
 
   return (
     <header className="sticky top-2 lg:static z-30 h-[64px] sm:h-[72px] mx-2 sm:mx-4 lg:mx-6 mt-2 sm:mt-4 lg:mt-6 mb-3 sm:mb-4 px-3 sm:px-5 lg:px-6 bg-white/95 backdrop-blur-md rounded-2xl border border-[#E2E8F0] shadow-topbar flex items-center justify-between gap-2 sm:gap-4 select-none">
@@ -159,7 +161,7 @@ export function TopBar({
         {/* Notifications Icon Button */}
         <button
           type="button"
-          onClick={() => (window.location.href = '/notifications')}
+          onClick={() => navigate('/notifications')}
           className="relative min-h-[40px] min-w-[40px] sm:min-h-[44px] sm:min-w-[44px] flex items-center justify-center text-[#64748B] hover:text-[#081226] hover:bg-[#F8FAFC] rounded-xl border border-[#E2E8F0] transition-colors cursor-pointer shrink-0"
           title="Notifications"
         >

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from 'lucide-react';
 import { cn } from '@/utils/cn';
@@ -32,6 +32,10 @@ function formatToastMessage(msg) {
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
+  const removeToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const addToast = useCallback(({ title, message, type = 'info', duration = 4000 }) => {
     const formattedTitle = formatToastMessage(title);
     const formattedMessage = formatToastMessage(message);
@@ -44,19 +48,20 @@ export function ToastProvider({ children }) {
       }, duration);
     }
     return id;
-  }, []);
-
-  const removeToast = useCallback((id) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  }, [removeToast]);
 
   const success = useCallback((title, message) => addToast({ title, message, type: 'success' }), [addToast]);
   const error = useCallback((title, message) => addToast({ title, message, type: 'error' }), [addToast]);
   const warning = useCallback((title, message) => addToast({ title, message, type: 'warning' }), [addToast]);
   const info = useCallback((title, message) => addToast({ title, message, type: 'info' }), [addToast]);
 
+  const value = useMemo(
+    () => ({ addToast, removeToast, success, error, warning, info }),
+    [addToast, removeToast, success, error, warning, info]
+  );
+
   return (
-    <ToastContext.Provider value={{ addToast, removeToast, success, error, warning, info }}>
+    <ToastContext.Provider value={value}>
       {children}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2.5 pointer-events-none max-w-sm w-full">
         <AnimatePresence>

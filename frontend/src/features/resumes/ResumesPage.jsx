@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -40,6 +40,72 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
 import { formatDate, cn } from '@/utils/cn';
+
+// Memoized Candidate Row Component to eliminate unnecessary re-renders
+const CandidateRow = React.memo(function CandidateRow({
+  candidate,
+  isSelected,
+  onSelect,
+  menuItems,
+}) {
+  return (
+    <div
+      onClick={() => onSelect(candidate)}
+      className={cn(
+        'px-5 py-3.5 flex items-center justify-between gap-4 cursor-pointer transition-all duration-100 group relative',
+        isSelected ? 'bg-[#EFF6FF] border-l-4 border-[#2563EB]' : 'hover:bg-[#F8FAFC]'
+      )}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <Avatar name={candidate.candidate_name} size="sm" variant={isSelected ? 'blue' : 'navy'} />
+
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span
+              className={cn(
+                'text-small font-bold truncate',
+                isSelected ? 'text-[#2563EB]' : 'text-[#081226]'
+              )}
+            >
+              {candidate.candidate_name}
+            </span>
+
+            <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-white text-[#475569] border border-[#E2E8F0] shrink-0">
+              {candidate.resume_id_tag || `RES${candidate.display_seq || 1000}`}
+            </span>
+          </div>
+
+          <p className="text-caption text-[#64748B] mt-0.5 truncate flex items-center gap-1.5">
+            <span className="font-semibold text-[#334155]">{candidate.company || 'General'}</span>
+            <span>•</span>
+            <span className="truncate">{candidate.role}</span>
+          </p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 shrink-0">
+        <span className="hidden md:inline-block text-[11px] font-medium px-2 py-0.5 rounded-md bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0] max-w-[110px] truncate">
+          {candidate.client_name || 'Client'}
+        </span>
+
+        <div className="flex items-center gap-1">
+          <Dropdown
+            trigger={
+              <button
+                type="button"
+                onClick={(e) => e.stopPropagation()}
+                className="p-1.5 rounded-lg text-[#64748B] hover:text-[#081226] hover:bg-white transition-colors cursor-pointer"
+              >
+                <MoreVertical className="w-4 h-4" />
+              </button>
+            }
+            items={menuItems}
+          />
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export function ResumesPage() {
   const { user, isEmployee, isAdmin, isSubAdmin, isClient } = useAuth();
@@ -87,7 +153,7 @@ export function ResumesPage() {
   }, []);
 
   // Fetch resumes with global date filter support
-  const fetchResumes = async () => {
+  const fetchResumes = useCallback(async () => {
     setLoading(true);
     try {
       const params = {
@@ -121,29 +187,29 @@ export function ResumesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, pageSize, search, selectedClient, selectedCompany, dateFilter, customDate, selectedResume, toastError]);
 
   useEffect(() => {
     fetchResumes();
   }, [search, selectedClient, selectedCompany, dateFilter, customDate, page]);
 
   // Candidate Selection Handler
-  const handleSelectCandidate = (candidate) => {
+  const handleSelectCandidate = useCallback((candidate) => {
     setSelectedResume(candidate);
     setNoteText(candidate.client_notes || '');
-  };
+  }, []);
 
   // Edit Metadata Handler
-  const openEditModal = (resume) => {
+  const openEditModal = useCallback((resume) => {
     setEditResumeTarget(resume);
     setEditName(resume.candidate_name);
     setEditCompany(resume.company || '');
     setEditRole(resume.role || '');
     setEditClientId(resume.client_id || '');
     setIsEditOpen(true);
-  };
+  }, []);
 
-  const handleSaveEdit = async (e) => {
+  const handleSaveEdit = useCallback(async (e) => {
     e.preventDefault();
     if (!editResumeTarget) return;
     setSavingEdit(true);
@@ -171,10 +237,10 @@ export function ResumesPage() {
     } finally {
       setSavingEdit(false);
     }
-  };
+  }, [editResumeTarget, editName, editCompany, editRole, editClientId, success, fetchResumes, selectedResume, toastError]);
 
   // Delete Resume Handler
-  const handleDeleteResume = async () => {
+  const handleDeleteResume = useCallback(async () => {
     if (!deleteResumeTarget) return;
     setDeleting(true);
     try {
@@ -190,9 +256,9 @@ export function ResumesPage() {
     } finally {
       setDeleting(false);
     }
-  };
+  }, [deleteResumeTarget, success, selectedResume, fetchResumes, toastError]);
 
-  const handleCopyShareLink = (resume) => {
+  const handleCopyShareLink = useCallback((resume) => {
     const shareUrl = `${window.location.origin}/api/resumes/${resume.id}/preview`;
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(shareUrl);
@@ -200,9 +266,9 @@ export function ResumesPage() {
     } else {
       prompt('Copy internal resume link:', shareUrl);
     }
-  };
+  }, [success]);
 
-  const getResumeActionMenu = (resume) => {
+  const getResumeActionMenu = useCallback((resume) => {
     const items = [];
 
     items.push({
@@ -243,7 +309,10 @@ export function ResumesPage() {
     }
 
     return items;
-  };
+  }, [handleCopyShareLink, isAdmin, isSubAdmin, isEmployee, user?.id, openEditModal]);
+
+  // Only render the first 20 rows initially
+  const displayedResumes = useMemo(() => resumes.slice(0, 20), [resumes]);
 
   const totalPages = Math.ceil(totalResumes / pageSize) || 1;
 
@@ -405,73 +474,18 @@ export function ResumesPage() {
                 <p className="text-caption mt-0.5">Try adjusting search keywords, date filters, or service clients.</p>
               </div>
             ) : (
-              resumes.map((cand) => {
+              displayedResumes.map((cand) => {
                 const isSelected = selectedResume?.id === cand.id;
                 const menuItems = getResumeActionMenu(cand);
 
                 return (
-                  <div
+                  <CandidateRow
                     key={cand.id}
-                    onClick={() => handleSelectCandidate(cand)}
-                    className={cn(
-                      'px-5 py-3.5 flex items-center justify-between gap-4 cursor-pointer transition-all duration-100 group relative',
-                      isSelected
-                        ? 'bg-[#EFF6FF] border-l-4 border-[#2563EB]'
-                        : 'hover:bg-[#F8FAFC]'
-                    )}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar
-                        name={cand.candidate_name}
-                        size="sm"
-                        variant={isSelected ? 'blue' : 'navy'}
-                      />
-
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              'text-small font-bold truncate',
-                              isSelected ? 'text-[#2563EB]' : 'text-[#081226]'
-                            )}
-                          >
-                            {cand.candidate_name}
-                          </span>
-
-                          <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-white text-[#475569] border border-[#E2E8F0] shrink-0">
-                            {cand.resume_id_tag || `RES${cand.display_seq || 1000}`}
-                          </span>
-                        </div>
-
-                        <p className="text-caption text-[#64748B] mt-0.5 truncate flex items-center gap-1.5">
-                          <span className="font-semibold text-[#334155]">{cand.company || 'General'}</span>
-                          <span>•</span>
-                          <span className="truncate">{cand.role}</span>
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="hidden md:inline-block text-[11px] font-medium px-2 py-0.5 rounded-md bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0] max-w-[110px] truncate">
-                        {cand.client_name || 'Client'}
-                      </span>
-
-                      <div className="flex items-center gap-1">
-                        <Dropdown
-                          trigger={
-                            <button
-                              type="button"
-                              onClick={(e) => e.stopPropagation()}
-                              className="p-1.5 rounded-lg text-[#64748B] hover:text-[#081226] hover:bg-white transition-colors"
-                            >
-                              <MoreVertical className="w-4 h-4" />
-                            </button>
-                          }
-                          items={menuItems}
-                        />
-                      </div>
-                    </div>
-                  </div>
+                    candidate={cand}
+                    isSelected={isSelected}
+                    onSelect={handleSelectCandidate}
+                    menuItems={menuItems}
+                  />
                 );
               })
             )}

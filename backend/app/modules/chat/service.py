@@ -452,36 +452,42 @@ async def export_room_chat(db: AsyncSession, room_id: uuid.UUID, user: User) -> 
     ]
 
 
+from app.core.cache import cache
+
 async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
     """Lightweight unread count query for header polling."""
+    cache_key = f"chat_unread:{str(user.id)}"
+    cached = cache.get(cache_key)
+    if cached:
+        print(f"\033[92m[CACHE HIT] Chat Unread ({cache_key})\033[0m")
+        return cached
+
     allowed = await get_allowed_client_ids(db, user)
 
-    room_query = select(ChatRoom.id)
-    if allowed is not None:
-        room_query = room_query.where(ChatRoom.client_id.in_(allowed))
-
-    room_ids = (await db.execute(room_query)).scalars().all()
-    if not room_ids:
-        return UnreadCountResponse(total_unread=0, unread_count=0)
-
-    # 1. Fetch read timestamps for current user
-    read_map = dict(
-        (await db.execute(
-            select(ChatRead.room_id, ChatRead.last_read_at)
-            .where(ChatRead.user_id == user.id, ChatRead.room_id.in_(room_ids))
-        )).all()
+    from sqlalchemy import or_
+    sub_read = (
+        select(ChatRead.room_id, ChatRead.last_read_at)
+        .where(ChatRead.user_id == user.id)
+        .subquery()
     )
 
-    # 2. Fetch all messages sent by others
-    msg_rows = (await db.execute(
-        select(ChatMessage.room_id, ChatMessage.created_at)
-        .where(ChatMessage.room_id.in_(room_ids), ChatMessage.sender_id != user.id)
-    )).all()
+    q = (
+        select(func.count(ChatMessage.id))
+        .join(ChatRoom, ChatMessage.room_id == ChatRoom.id)
+        .outerjoin(sub_read, sub_read.c.room_id == ChatMessage.room_id)
+        .where(
+            ChatMessage.sender_id != user.id,
+            or_(
+                sub_read.c.last_read_at.is_(None),
+                ChatMessage.created_at > sub_read.c.last_read_at,
+            ),
+        )
+    )
+    if allowed is not None:
+        q = q.where(ChatRoom.client_id.in_(allowed))
 
-    total_unread = 0
-    for rid, cat in msg_rows:
-        read_time = read_map.get(rid)
-        if read_time is None or (cat and cat > read_time):
-            total_unread += 1
+    total_unread = (await db.execute(q)).scalar() or 0
 
-    return UnreadCountResponse(total_unread=total_unread, unread_count=total_unread)
+    res = UnreadCountResponse(total_unread=total_unread, unread_count=total_unread)
+    cache.set(cache_key, res, ttl=10.0, tags={"chat"})
+    return res

@@ -904,6 +904,10 @@ async def get_client_dashboard(
     )
 
 
+import time
+from app.core.cache import cache, invalidate_dashboard_cache
+from app.core.database import async_session_factory
+
 async def get_admin_dashboard_home(
     db: AsyncSession,
     current_user: User,
@@ -915,10 +919,19 @@ async def get_admin_dashboard_home(
     """
     Consolidated, single-roundtrip endpoint for Super Admin / Sub-Admin dashboard.
     Fetches overview metrics, team performance, attendance summary, client cards,
-    and metadata.
+    and metadata on single fast connection pool and caches in-memory for sub-millisecond responses.
     """
+    cache_key = f"admin_home:{str(current_user.id)}:{str(client_id)}:{str(employee_id)}:{str(date_range)}:{str(custom_date)}"
+    cached = cache.get(cache_key)
+    if cached:
+        print(f"\033[92m[CACHE HIT] Admin Dashboard ({cache_key})\033[0m")
+        return cached
+
+    print(f"\033[94m[CACHE MISS] Fetching Admin Dashboard from DB...\033[0m")
     from app.modules.users.service import get_employee_performance_list, get_sub_admin_client_ids
     from app.modules.attendance.service import get_admin_attendance_summary
+
+    t_start = time.perf_counter()
 
     overview = await get_admin_overview(
         db, current_user=current_user, client_id=client_id, employee_id=employee_id, date_range=date_range, custom_date=custom_date
@@ -927,7 +940,6 @@ async def get_admin_dashboard_home(
     team_perf_models = await get_employee_performance_list(db, current_user=current_user)
     attendance_summary = await get_admin_attendance_summary(db)
 
-    # Initial metadata queries
     clients_q = select(Client.id, Client.company_name).where(Client.is_active == True).order_by(Client.company_name)  # noqa: E712
     if current_user.role == "sub_admin":
         allowed_cids = await get_sub_admin_client_ids(db, current_user.id)
@@ -936,27 +948,33 @@ async def get_admin_dashboard_home(
     emps_q = select(User.id, User.name, User.email).where(User.role == "employee", User.is_active == True).order_by(User.name)  # noqa: E712
     targets_q = select(Target.id, Target.employee_id, Target.client_id, Target.daily_target, Target.status).where(Target.status == "active")
 
-    clients_res = await db.execute(clients_q)
-    emps_res = await db.execute(emps_q)
-    targets_res = await db.execute(targets_q)
+    c_res = await db.execute(clients_q)
+    e_res = await db.execute(emps_q)
+    t_res = await db.execute(targets_q)
 
-    team_perf = [p.model_dump() if hasattr(p, "model_dump") else p.dict() for p in team_perf_models]
-    clients_list = [{"id": str(r.id), "company_name": r.company_name} for r in clients_res.all()]
-    emps_list = [{"id": str(r.id), "employee_id": str(r.id), "name": r.name, "email": r.email} for r in emps_res.all()]
-    targets_list = [
+    clients_list = [{"id": str(r.id), "company_name": r.company_name} for r in c_res.all()]
+    emps_list = [{"id": str(r.id), "employee_id": str(r.id), "name": r.name, "email": r.email} for r in e_res.all()]
+    t_list = [
         {"id": str(r.id), "employee_id": str(r.employee_id), "client_id": str(r.client_id), "daily_target": r.daily_target, "status": r.status}
-        for r in targets_res.all()
+        for r in t_res.all()
     ]
 
-    return AdminHomeResponse(
+    team_perf = [p.model_dump() if hasattr(p, "model_dump") else p.dict() for p in team_perf_models]
+    total_d = (time.perf_counter() - t_start) * 1000
+
+    print(f"\033[92m[PROFILER: AdminDashboard] Direct Query Execution Complete in {total_d:.1f}ms\033[0m")
+
+    response = AdminHomeResponse(
         overview=overview,
         team_performance=team_perf,
         attendance_summary=attendance_summary,
         client_cards=client_cards,
         clients=clients_list,
         all_employees=emps_list,
-        all_targets=targets_list,
+        all_targets=t_list,
     )
+    cache.set(cache_key, response, ttl=20.0, tags={"dashboard"})
+    return response
 
 
 async def get_employee_dashboard_home(
@@ -969,7 +987,15 @@ async def get_employee_dashboard_home(
     """
     Consolidated single-roundtrip endpoint for Recruiter / Employee dashboard.
     """
+    cache_key = f"emp_home:{str(current_user.id)}:{str(client_id)}:{str(date_range)}:{str(custom_date)}"
+    cached = cache.get(cache_key)
+    if cached:
+        print(f"\033[92m[CACHE HIT] Employee Dashboard ({cache_key})\033[0m")
+        return cached
+
     from app.modules.notifications.models import Notification
+
+    t_start = time.perf_counter()
 
     dashboard = await get_employee_dashboard(
         db, user=current_user, client_id=client_id, date_range=date_range, custom_date=custom_date
@@ -1003,11 +1029,16 @@ async def get_employee_dashboard_home(
         for r in notif_res.all()
     ]
 
-    return EmployeeHomeResponse(
+    total_d = (time.perf_counter() - t_start) * 1000
+    print(f"\033[92m[PROFILER: EmployeeDashboard] Direct Query Execution Complete in {total_d:.1f}ms\033[0m")
+
+    response = EmployeeHomeResponse(
         dashboard=dashboard,
         assigned_clients=assigned_clients,
         notifications=notifications,
     )
+    cache.set(cache_key, response, ttl=20.0, tags={"dashboard"})
+    return response
 
 
 async def get_client_dashboard_home(
@@ -1017,17 +1048,30 @@ async def get_client_dashboard_home(
     """
     Consolidated single-roundtrip endpoint for Client Portal dashboard.
     """
+    cache_key = f"client_home:{str(current_user.id)}"
+    cached = cache.get(cache_key)
+    if cached:
+        print(f"\033[92m[CACHE HIT] Client Dashboard ({cache_key})\033[0m")
+        return cached
+
     from app.modules.chat.models import ChatRoom
+
+    t_start = time.perf_counter()
 
     dashboard = await get_client_dashboard(db, user=current_user)
     chat_room_q = select(ChatRoom.id).where(ChatRoom.client_id == current_user.client_id)
     chat_room_res = await db.execute(chat_room_q)
     chat_room_id = chat_room_res.scalar_one_or_none()
 
-    return ClientHomeResponse(
+    total_d = (time.perf_counter() - t_start) * 1000
+    print(f"\033[92m[PROFILER: ClientDashboard] Direct Query Execution Complete in {total_d:.1f}ms\033[0m")
+
+    response = ClientHomeResponse(
         dashboard=dashboard,
         chat_room_id=chat_room_id,
     )
+    cache.set(cache_key, response, ttl=20.0, tags={"dashboard"})
+    return response
 
 
 async def get_dashboard_performance_metrics(db: AsyncSession) -> PerformanceStatsResponse:
@@ -1049,3 +1093,34 @@ async def get_dashboard_performance_metrics(db: AsyncSession) -> PerformanceStat
         total_targets=tgt_cnt or 0,
         cache_status="Active (In-Memory Frontend SWR + Inflight Deduplication)",
     )
+
+
+async def warm_user_dashboard(user_id: uuid.UUID, user_role: str, user_email: str):
+    """Background pre-warmer that executes immediately upon user login."""
+    try:
+        from app.core.database import async_session_factory
+        async with async_session_factory() as s:
+            from app.modules.users.models import User
+            user = (await s.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+            if not user:
+                return
+            
+            # 1. Pre-warm Dashboard
+            if user_role in ("admin", "sub_admin"):
+                await get_admin_dashboard_home(s, current_user=user, date_range="today")
+            elif user_role == "employee":
+                await get_employee_dashboard_home(s, current_user=user, date_range="today")
+            elif user_role == "client":
+                await get_client_dashboard_home(s, current_user=user)
+
+            # 2. Pre-warm Notifications
+            from app.modules.notifications.service import get_user_notifications
+            await get_user_notifications(s, user, limit=20)
+
+            # 3. Pre-warm Chat Unread
+            from app.modules.chat.service import get_total_unread
+            await get_total_unread(s, user)
+
+        print(f"\033[92m⚡ [PRE-WARMED ALL] Dashboard, Notifications & Chat ready for {user_email} ({user_role})\033[0m")
+    except Exception as e:
+        print(f"⚠️ Note during dashboard pre-warm: {e}")

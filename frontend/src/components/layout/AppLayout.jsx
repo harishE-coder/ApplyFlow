@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
@@ -7,21 +7,33 @@ import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
 
 export function AppLayout() {
-  const { user } = useAuth();
+  const { user, bootstrapData } = useAuth();
   const location = useLocation();
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [notifications, setNotifications] = useState(() => bootstrapData?.notifications?.items || []);
+  const [unreadCount, setUnreadCount] = useState(() => bootstrapData?.notifications?.unread_count || 0);
+  const [unreadChatCount, setUnreadChatCount] = useState(() => bootstrapData?.chat_unread?.total_unread || 0);
+
+  // Sync state if bootstrapData arrives or updates
+  useEffect(() => {
+    if (bootstrapData?.notifications) {
+      setNotifications(bootstrapData.notifications.items || []);
+      setUnreadCount(bootstrapData.notifications.unread_count || 0);
+    }
+    if (bootstrapData?.chat_unread) {
+      setUnreadChatCount(bootstrapData.chat_unread.total_unread || 0);
+    }
+  }, [bootstrapData]);
 
   // Auto close mobile sidebar when route changes
   useEffect(() => {
     setIsMobileSidebarOpen(false);
   }, [location.pathname]);
 
-  // Fetch notifications & chat unread counts
-  const fetchNotifications = async () => {
+  // Fetch notifications & chat unread counts (Background Polling only)
+  const fetchNotifications = useCallback(async () => {
+    if (!user) return;
     try {
       const res = await api.get('/notifications');
       setNotifications(res.data.items || []);
@@ -29,26 +41,32 @@ export function AppLayout() {
     } catch (err) {
       console.error('Failed to fetch notifications:', err);
     }
-  };
+  }, [user]);
 
-  const fetchChatUnread = async () => {
+  const fetchChatUnread = useCallback(async () => {
+    if (!user) return;
     try {
       const res = await api.get('/chat/unread-count');
       setUnreadChatCount(res.data.total_unread || 0);
     } catch (err) {
       // Quiet fail if not logged in
     }
-  };
+  }, [user]);
 
   useEffect(() => {
-    fetchNotifications();
-    fetchChatUnread();
+    if (!user) return;
+    // Set up polling interval without immediate redundant fetch on mount
     const interval = setInterval(() => {
       fetchNotifications();
       fetchChatUnread();
     }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user, fetchNotifications, fetchChatUnread]);
+
+  const handleOpenCommandPalette = useCallback(() => setIsCommandPaletteOpen(true), []);
+  const handleCloseCommandPalette = useCallback(() => setIsCommandPaletteOpen(false), []);
+  const handleToggleMobileSidebar = useCallback(() => setIsMobileSidebarOpen((prev) => !prev), []);
+  const handleCloseMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
 
   // Global ⌘K keyboard shortcut listener
   useEffect(() => {
@@ -69,18 +87,18 @@ export function AppLayout() {
         unreadNotificationsCount={unreadCount}
         unreadChatCount={unreadChatCount}
         isMobileOpen={isMobileSidebarOpen}
-        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        onCloseMobile={handleCloseMobileSidebar}
       />
 
       {/* Main Workspace Frame */}
       <div className="flex-1 flex flex-col min-w-0 min-h-screen w-full lg:pr-6 pb-6">
         {/* Top Bar */}
         <TopBar
-          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+          onOpenCommandPalette={handleOpenCommandPalette}
           unreadCount={unreadCount}
           notifications={notifications}
           onRefreshNotifications={fetchNotifications}
-          onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+          onToggleMobileSidebar={handleToggleMobileSidebar}
         />
 
         {/* Page View Container (Responsive Padding) */}
@@ -92,7 +110,7 @@ export function AppLayout() {
       {/* Global Command Palette */}
       <CommandPalette
         isOpen={isCommandPaletteOpen}
-        onClose={() => setIsCommandPaletteOpen(false)}
+        onClose={handleCloseCommandPalette}
         userRole={user?.role}
       />
     </div>

@@ -1,9 +1,26 @@
-import React from 'react';
+import React, { Profiler } from 'react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { AdminDashboard } from './AdminDashboard';
 import { EmployeeDashboard } from './EmployeeDashboard';
 import { ClientDashboard } from './ClientDashboard';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
+
+function onRenderDashboard(
+  id,
+  phase,
+  actualDuration,
+  baseDuration,
+  startTime,
+  commitTime
+) {
+  if (import.meta.env?.DEV) {
+    if (actualDuration > 100) {
+      console.warn(`[React Profiler Alert] ${id} (${phase}) took ${actualDuration.toFixed(2)}ms (exceeds 100ms target)`);
+    } else {
+      console.debug(`[React Profiler] ${id} (${phase}): ${actualDuration.toFixed(2)}ms (base: ${baseDuration.toFixed(2)}ms)`);
+    }
+  }
+}
 
 export function DashboardPage() {
   const { user, isLoading } = useAuth();
@@ -16,16 +33,20 @@ export function DashboardPage() {
     );
   }
 
+  let dashboardContent = null;
   if (user.role === 'admin' || user.role === 'sub_admin') {
-    return <AdminDashboard />;
+    dashboardContent = <AdminDashboard />;
+  } else if (user.role === 'client') {
+    dashboardContent = <ClientDashboard />;
+  } else {
+    dashboardContent = <EmployeeDashboard />;
   }
 
-  if (user.role === 'client') {
-    return <ClientDashboard />;
-  }
-
-  // Default: Employee / Recruiter Dashboard
-  return <EmployeeDashboard />;
+  return (
+    <Profiler id={`Dashboard-${user.role}`} onRender={onRenderDashboard}>
+      {dashboardContent}
+    </Profiler>
+  );
 }
 
 export default DashboardPage;

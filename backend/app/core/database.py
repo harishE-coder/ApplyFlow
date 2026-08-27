@@ -19,17 +19,20 @@ def _create_engine():
     return create_async_engine(
         url,
         echo=False,
-        pool_size=10,
-        max_overflow=20,
+        pool_size=20,
+        max_overflow=30,
         pool_pre_ping=True,
-        pool_recycle=300,
-        pool_timeout=60,
+        pool_recycle=1800,
+        pool_timeout=30,
         connect_args={
             "statement_cache_size": 0,
             "prepared_statement_cache_size": 0,
-            "command_timeout": 60,
-            "timeout": 60,
-            "server_settings": {"jit": "off"},
+            "command_timeout": 30,
+            "timeout": 30,
+            "server_settings": {
+                "jit": "off",
+                "application_name": "applyflow_api",
+            },
         },
     )
 
@@ -40,6 +43,16 @@ async_session_factory = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+async def warmup_db_pool():
+    """Pre-warm database connections on server startup."""
+    try:
+        from sqlalchemy import text
+        async with async_session_factory() as session:
+            await session.execute(text("SELECT 1"))
+        print("⚡ Database connection pool warmed and ready.")
+    except Exception as e:
+        print(f"⚠️ Note during DB pool warmup: {e}")
 
 
 

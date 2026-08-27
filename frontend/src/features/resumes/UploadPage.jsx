@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
@@ -28,6 +28,121 @@ import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
 import { formatDate, cn } from '@/utils/cn';
 
+// Memoized Upload Queue Row
+const UploadQueueRow = React.memo(function UploadQueueRow({
+  row,
+  onUpdateRow,
+  onRemoveRow,
+}) {
+  return (
+    <tr
+      className={cn(
+        'transition-colors',
+        row.status === 'duplicate'
+          ? 'bg-[#FFFBEB]/40'
+          : row.status === 'needs_review'
+          ? 'bg-[#FEF2F2]/40'
+          : 'hover:bg-[#F8FAFC]'
+      )}
+    >
+      {/* 1. File Name */}
+      <td className="px-4 py-3 max-w-[170px]">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText className="w-4 h-4 text-[#0D6EFD] shrink-0" />
+          <span className="font-mono text-caption text-[#081226] truncate" title={row.filename}>
+            {row.filename}
+          </span>
+        </div>
+      </td>
+
+      {/* 2. Service Client (Editable) */}
+      <td className="px-4 py-3 w-36">
+        <input
+          type="text"
+          value={row.service_client}
+          onChange={(e) => onUpdateRow(row.id, 'service_client', e.target.value)}
+          className={cn(
+            'w-full h-[34px] px-2 rounded-lg text-caption font-semibold bg-white border focus:outline-none',
+            row.clientMatch === false
+              ? 'border-rose-300 text-rose-700 bg-rose-50/50'
+              : 'border-[#E2E8F0] text-[#081226] focus:border-[#0D6EFD]'
+          )}
+          placeholder="Service Client"
+        />
+      </td>
+
+      {/* 3. Target Company (Editable) */}
+      <td className="px-4 py-3 w-32">
+        <input
+          type="text"
+          value={row.company}
+          onChange={(e) => onUpdateRow(row.id, 'company', e.target.value)}
+          className="w-full h-[34px] px-2 rounded-lg text-caption font-bold bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
+          placeholder="e.g. TCS"
+        />
+      </td>
+
+      {/* 4. Role / Role ID (Editable) */}
+      <td className="px-4 py-3 w-36">
+        <input
+          type="text"
+          value={row.role}
+          onChange={(e) => onUpdateRow(row.id, 'role', e.target.value)}
+          className="w-full h-[34px] px-2 rounded-lg text-caption bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
+          placeholder="e.g. Java Developer"
+        />
+      </td>
+
+      {/* 5. Resume Identifier (Editable) */}
+      <td className="px-4 py-3 w-32">
+        <input
+          type="text"
+          value={row.resume_identifier}
+          placeholder="e.g. RES101"
+          onChange={(e) => onUpdateRow(row.id, 'resume_identifier', e.target.value)}
+          className="w-full h-[34px] px-2 rounded-lg text-caption font-mono bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
+        />
+      </td>
+
+      {/* 6. Status Badge */}
+      <td className="px-4 py-3 whitespace-nowrap">
+        {row.status === 'valid' && (
+          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0]">
+            ✅ Valid
+          </span>
+        )}
+        {row.status === 'duplicate' && (
+          <span
+            className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FFFBEB] text-[#D97706] border border-[#FDE68A]"
+            title={row.duplicateInfo?.existing_candidate ? `Matches candidate ${row.duplicateInfo.existing_candidate}` : 'Duplicate candidate'}
+          >
+            ⚠️ Duplicate Exists
+          </span>
+        )}
+        {row.status === 'needs_review' && (
+          <span
+            className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FEF2F2] text-[#EF4444] border border-[#FECACA] cursor-help"
+            title={row.error || 'Metadata requires review before upload.'}
+          >
+            {row.clientMatch === false ? '❌ Client Mismatch' : '❌ Needs Review'}
+          </span>
+        )}
+      </td>
+
+      {/* 7. Row delete */}
+      <td className="px-4 py-3 text-right">
+        <button
+          type="button"
+          onClick={() => onRemoveRow(row.id)}
+          className="p-1.5 text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#FEF2F2] rounded-lg transition-colors cursor-pointer"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </td>
+    </tr>
+  );
+});
+
 export function UploadPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -44,11 +159,22 @@ export function UploadPage() {
 
   // Ingestion Queue State
   const [queue, setQueue] = useState([]);
+  const [visibleCount, setVisibleCount] = useState(20);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0); // 0 to 100
   const [uploadProgressCount, setUploadProgressCount] = useState({ current: 0, total: 0 });
+
+  // Progressive rendering for large queue (render first 20 immediately, then expand)
+  useEffect(() => {
+    if (queue.length > 20 && visibleCount < queue.length) {
+      const timer = setTimeout(() => {
+        setVisibleCount((prev) => Math.min(prev + 50, queue.length));
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [queue.length, visibleCount]);
 
   // Success State
   const [uploadSuccessSummary, setUploadSuccessSummary] = useState(null);
@@ -674,113 +800,13 @@ export function UploadPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#F1F5F9]">
-                {queue.map((row) => (
-                  <tr
+                {queue.slice(0, visibleCount).map((row) => (
+                  <UploadQueueRow
                     key={row.id}
-                    className={cn(
-                      'transition-colors',
-                      row.status === 'duplicate'
-                        ? 'bg-[#FFFBEB]/40'
-                        : row.status === 'needs_review'
-                        ? 'bg-[#FEF2F2]/40'
-                        : 'hover:bg-[#F8FAFC]'
-                    )}
-                  >
-                    {/* 1. File Name */}
-                    <td className="px-4 py-3 max-w-[170px]">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileText className="w-4 h-4 text-[#0D6EFD] shrink-0" />
-                        <span className="font-mono text-caption text-[#081226] truncate" title={row.filename}>
-                          {row.filename}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* 2. Service Client (Editable) */}
-                    <td className="px-4 py-3 w-36">
-                      <input
-                        type="text"
-                        value={row.service_client}
-                        onChange={(e) => handleUpdateRow(row.id, 'service_client', e.target.value)}
-                        className={cn(
-                          'w-full h-[34px] px-2 rounded-lg text-caption font-semibold bg-white border focus:outline-none',
-                          row.clientMatch === false
-                            ? 'border-rose-300 text-rose-700 bg-rose-50/50'
-                            : 'border-[#E2E8F0] text-[#081226] focus:border-[#0D6EFD]'
-                        )}
-                        placeholder="Service Client"
-                      />
-                    </td>
-
-                    {/* 3. Target Company (Editable) */}
-                    <td className="px-4 py-3 w-32">
-                      <input
-                        type="text"
-                        value={row.company}
-                        onChange={(e) => handleUpdateRow(row.id, 'company', e.target.value)}
-                        className="w-full h-[34px] px-2 rounded-lg text-caption font-bold bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
-                        placeholder="e.g. TCS"
-                      />
-                    </td>
-
-                    {/* 4. Role / Role ID (Editable) */}
-                    <td className="px-4 py-3 w-36">
-                      <input
-                        type="text"
-                        value={row.role}
-                        onChange={(e) => handleUpdateRow(row.id, 'role', e.target.value)}
-                        className="w-full h-[34px] px-2 rounded-lg text-caption bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
-                        placeholder="e.g. Java Developer"
-                      />
-                    </td>
-
-                    {/* 5. Resume Identifier (Editable) */}
-                    <td className="px-4 py-3 w-32">
-                      <input
-                        type="text"
-                        value={row.resume_identifier}
-                        placeholder="e.g. RES101"
-                        onChange={(e) => handleUpdateRow(row.id, 'resume_identifier', e.target.value)}
-                        className="w-full h-[34px] px-2 rounded-lg text-caption font-mono bg-white text-[#081226] border border-[#E2E8F0] focus:border-[#0D6EFD] focus:outline-none"
-                      />
-                    </td>
-
-                    {/* 6. Status Badge */}
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {row.status === 'valid' && (
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0]">
-                          ✅ Valid
-                        </span>
-                      )}
-                      {row.status === 'duplicate' && (
-                        <span
-                          className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FFFBEB] text-[#D97706] border border-[#FDE68A]"
-                          title={row.duplicateInfo?.existing_candidate ? `Matches candidate ${row.duplicateInfo.existing_candidate}` : 'Duplicate candidate'}
-                        >
-                          ⚠️ Duplicate Exists
-                        </span>
-                      )}
-                      {row.status === 'needs_review' && (
-                        <span
-                          className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FEF2F2] text-[#EF4444] border border-[#FECACA] cursor-help"
-                          title={row.error || 'Metadata requires review before upload.'}
-                        >
-                          {row.clientMatch === false ? '❌ Client Mismatch' : '❌ Needs Review'}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* 7. Row delete */}
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRow(row.id)}
-                        className="p-1.5 text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#FEF2F2] rounded-lg transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
+                    row={row}
+                    onUpdateRow={handleUpdateRow}
+                    onRemoveRow={handleRemoveRow}
+                  />
                 ))}
               </tbody>
             </table>

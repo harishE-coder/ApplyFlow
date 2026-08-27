@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   FileText,
@@ -19,31 +19,26 @@ import {
   Clock,
   Send,
 } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  Cell,
-} from 'recharts';
 import { KPICard } from '@/components/ui/KPICard';
 import { BrandedLoader } from '@/components/ui/BrandedLoader';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { DateFilter } from '@/components/ui/DateFilter';
+import { ChartSkeleton } from '@/components/ui/ChartSkeleton';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
 import api from '@/services/api';
 import { cn } from '@/utils/cn';
 
+const ClientCharts = lazy(() => import('./charts/ClientCharts'));
+
 export function ClientDashboard() {
-  const { user } = useAuth();
+  const { user, bootstrapData } = useAuth();
   const { error: toastError } = useToast();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+
+  const initialHome = bootstrapData?.dashboard;
+  const [data, setData] = useState(() => initialHome?.dashboard || initialHome || null);
+  const [loading, setLoading] = useState(() => !initialHome?.dashboard && !initialHome);
 
   // Filters State
   const [selectedHiringCompany, setSelectedHiringCompany] = useState('all');
@@ -52,7 +47,19 @@ export function ClientDashboard() {
   const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
   const [expandedCards, setExpandedCards] = useState({});
 
-  const fetchClientDashboard = async () => {
+  const hasConsumedBootstrapRef = useRef(Boolean(initialHome));
+
+  useEffect(() => {
+    if (bootstrapData?.dashboard && !data) {
+      const home = bootstrapData.dashboard;
+      if (home.dashboard) setData(home.dashboard);
+      else setData(home);
+      setLoading(false);
+      hasConsumedBootstrapRef.current = true;
+    }
+  }, [bootstrapData, data]);
+
+  const fetchClientDashboard = useCallback(async () => {
     setLoading(true);
     try {
       const params = {};
@@ -73,24 +80,31 @@ export function ClientDashboard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateRange, customDate, toastError]);
 
   useEffect(() => {
+    if (hasConsumedBootstrapRef.current && dateRange === 'today') {
+      hasConsumedBootstrapRef.current = false;
+      return;
+    }
     fetchClientDashboard();
-  }, [dateRange, customDate]);
+  }, [fetchClientDashboard, dateRange]);
 
-  // Real-time listener for resume uploads to update client portal metrics instantly
+  // Real-time listener with stable ref to prevent re-attaching
+  const fetchRef = useRef(fetchClientDashboard);
+  fetchRef.current = fetchClientDashboard;
+
   useEffect(() => {
     const handleUploadEvent = () => {
-      fetchClientDashboard();
+      fetchRef.current();
     };
     window.addEventListener('resume-uploaded', handleUploadEvent);
     return () => window.removeEventListener('resume-uploaded', handleUploadEvent);
-  }, [dateRange, customDate]);
+  }, []);
 
-  const toggleCard = (id) => {
+  const toggleCard = useCallback((id) => {
     setExpandedCards((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  }, []);
 
   // Filter timeline items by Hiring Company & search
   const filteredTimeline = useMemo(() => {
@@ -251,63 +265,17 @@ export function ClientDashboard() {
         />
       </div>
 
-      {/* 3. Application Progress Chart & Live Stats Breakdown */}
-      <div className="bg-white p-6 sm:p-7 rounded-3xl border border-[#E2E8F0] shadow-card space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#F1F5F9]">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#2563EB] px-2.5 py-0.5 rounded-full bg-[#EFF6FF] border border-[#BFDBFE]">
-                Recruitment Funnel
-              </span>
-              <h3 className="text-h3 font-bold text-[#081226]">
-                Application Progress
-              </h3>
-            </div>
-            <p className="text-caption text-[#64748B] mt-0.5">
-              Candidate volume at each stage for your service account ({clientName}).
-            </p>
-          </div>
-
-          <div className="flex items-center gap-4 text-caption font-semibold">
-            <span className="flex items-center gap-1.5 text-[#2563EB]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB]" /> Applied ({data?.applied_count ?? 179})
-            </span>
-            <span className="flex items-center gap-1.5 text-[#F97316]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#F97316]" /> Interview ({data?.interview_updates ?? 24})
-            </span>
-            <span className="flex items-center gap-1.5 text-[#10B981]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#10B981]" /> Offer ({data?.offers_count ?? 6})
-            </span>
-            <span className="flex items-center gap-1.5 text-[#9333EA]">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#9333EA]" /> Joined (2)
-            </span>
-          </div>
-        </div>
-
-        <div className="h-64 w-full">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={progressData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-              <XAxis dataKey="stage" stroke="#94A3B8" fontSize={13} fontWeight={600} />
-              <YAxis stroke="#94A3B8" fontSize={12} />
-              <Tooltip
-                formatter={(val) => [`${val} Candidates`, 'Candidate Volume']}
-                contentStyle={{
-                  backgroundColor: '#081226',
-                  borderRadius: '12px',
-                  border: '1px solid #1E2E4E',
-                  color: '#FFF',
-                }}
-              />
-              <Bar dataKey="count" radius={[8, 8, 0, 0]}>
-                {progressData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+      {/* 3. Application Progress Chart (Lazy-Loaded Background Rendering) */}
+      <Suspense fallback={<ChartSkeleton className="h-64" title="Application Progress" />}>
+        <ClientCharts
+          progressData={progressData}
+          clientName={clientName}
+          appliedCount={data?.applied_count ?? 179}
+          interviewUpdates={data?.interview_updates ?? 24}
+          offersCount={data?.offers_count ?? 6}
+          joinedCount={2}
+        />
+      </Suspense>
 
       {/* 4. Application Timeline & Hiring Company Filter */}
       <div className="space-y-4">

@@ -35,7 +35,7 @@ class Notification(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
+    user: Mapped["User"] = relationship(lazy="noload")  # noqa: F821
 
     def __repr__(self) -> str:
         return f"<Notification user={self.user_id} title='{self.title}' read={self.is_read}>"

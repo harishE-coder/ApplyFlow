@@ -17,6 +17,7 @@ from app.modules.targets.schemas import (
     EmployeeTargetProgressResponse,
 )
 from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
+from app.core.cache import invalidate_dashboard_cache
 
 
 async def set_target(
@@ -60,14 +61,17 @@ async def set_target(
     db.add(
         ActivityLog(
             user_id=current_user.id,
-            action="target_updated",
+            action="target_set",
             details={
+                "target_id": str(target.id),
                 "employee_id": str(payload.employee_id),
                 "client_id": str(payload.client_id),
                 "daily_target": payload.daily_target,
             },
         )
     )
+    await db.flush()
+    invalidate_dashboard_cache()
 
     return target
 

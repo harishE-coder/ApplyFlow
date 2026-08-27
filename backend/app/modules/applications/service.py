@@ -27,6 +27,7 @@ from app.modules.applications.schemas import (
     ConfirmSaveRequest,
     ConfirmAIRequest,
 )
+from app.core.cache import invalidate_dashboard_cache
 from app.modules.resumes.service import get_allowed_client_ids
 from app.services.groq_service import GroqService
 
@@ -106,6 +107,8 @@ async def submit_application(
             },
         )
     )
+    await db.flush()
+    invalidate_dashboard_cache()
 
     return app
 

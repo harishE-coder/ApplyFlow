@@ -10,6 +10,8 @@ from app.modules.attendance.schemas import AttendanceRecordResponse, AdminAttend
 from app.modules.activity_logs.models import ActivityLog
 
 
+from app.core.cache import invalidate_dashboard_cache
+
 def _format_duration(start: datetime, end: datetime) -> str:
     if start.tzinfo is not None and end.tzinfo is None:
         start = start.replace(tzinfo=None)
@@ -66,6 +68,8 @@ async def check_in(db: AsyncSession, user: User) -> AttendanceRecordResponse:
             details={"check_in": now.isoformat()},
         )
     )
+    await db.flush()
+    invalidate_dashboard_cache()
 
     return AttendanceRecordResponse(
         id=record.id,
@@ -98,6 +102,8 @@ async def check_out(db: AsyncSession, user: User) -> AttendanceRecordResponse:
             },
         )
     )
+    await db.flush()
+    invalidate_dashboard_cache()
 
     return AttendanceRecordResponse(
         id=record.id,
