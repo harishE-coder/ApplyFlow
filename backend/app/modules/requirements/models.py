@@ -46,6 +46,14 @@ class Requirement(Base):
         String(20), default="active", nullable=False
     )  # "active", "done", "archived", "closed"
 
+    # Global vs Individual Recruiter Assignment
+    assignment_type: Mapped[str] = mapped_column(
+        String(20), default="all", nullable=False
+    )  # "all" (Global for all employees), "individual"
+    assigned_employee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
@@ -69,6 +77,9 @@ class Requirement(Base):
     )
     completer: Mapped["User | None"] = relationship(  # noqa: F821
         foreign_keys=[completed_by], lazy="selectin"
+    )
+    assigned_employee: Mapped["User | None"] = relationship(  # noqa: F821
+        foreign_keys=[assigned_employee_id], lazy="selectin"
     )
     resumes: Mapped[list["Resume"]] = relationship(  # noqa: F821
         back_populates="requirement", lazy="selectin"

@@ -89,6 +89,8 @@ async def lifespan(app: FastAPI):
 
             # Migrate requirements table columns
             for col, col_type in [
+                ("assignment_type", "VARCHAR(20) DEFAULT 'all'"),
+                ("assigned_employee_id", "CHAR(32)"),
                 ("job_title", "VARCHAR(200)"),
                 ("job_url", "VARCHAR(500)"),
                 ("priority", "VARCHAR(20) DEFAULT 'Medium'"),
@@ -193,7 +195,18 @@ async def lifespan(app: FastAPI):
                 pass
         print("✅ Database tables and columns verified.")
     else:
-        print("Connected to Neon PostgreSQL.")
+        print("Connected to Neon PostgreSQL. Ensuring database schema...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            for col, col_type in [
+                ("assignment_type", "VARCHAR(20) DEFAULT 'all'"),
+                ("assigned_employee_id", "UUID REFERENCES users(id)"),
+            ]:
+                try:
+                    await conn.execute(sqlalchemy.text(f"ALTER TABLE requirements ADD COLUMN IF NOT EXISTS {col} {col_type}"))
+                except Exception:
+                    pass
+        print("✅ Neon PostgreSQL schema verified.")
 
     # Initialize production Super Admin if missing
     try:

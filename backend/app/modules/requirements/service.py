@@ -13,6 +13,7 @@ from app.modules.activity_logs.models import ActivityLog
 from app.modules.notifications.service import create_notification
 from app.modules.requirements.schemas import RequirementCreate, RequirementUpdate, RequirementResponse
 from app.modules.resumes.service import get_allowed_client_ids
+from app.core.cache import invalidate_dashboard_cache
 
 
 async def get_requirements(
@@ -32,6 +33,16 @@ async def get_requirements(
 
     if allowed_clients is not None:
         query = query.where(Requirement.client_id.in_(allowed_clients))
+
+    # Recruiter visibility: All Employees jobs + Individually assigned jobs
+    if current_user.role == "employee":
+        query = query.where(
+            or_(
+                Requirement.assignment_type == "all",
+                Requirement.assigned_employee_id.is_(None),
+                Requirement.assigned_employee_id == current_user.id,
+            )
+        )
 
     if client_id:
         if allowed_clients is not None and client_id not in allowed_clients:
@@ -88,6 +99,7 @@ async def get_requirements(
 
         creator_name = req.creator.name if req.creator else None
         completer_name = req.completer.name if req.completer else None
+        assigned_emp_name = req.assigned_employee.name if req.assigned_employee else ("All Employees" if req.assignment_type == "all" else None)
         job_title = req.job_title or req.role
 
         response.append(
@@ -103,6 +115,9 @@ async def get_requirements(
                 priority=req.priority or "Medium",
                 notes=req.notes,
                 status=req.status,
+                assignment_type=req.assignment_type or "all",
+                assigned_employee_id=req.assigned_employee_id,
+                assigned_employee_name=assigned_emp_name,
                 created_by=req.created_by,
                 creator_name=creator_name,
                 completed_by=req.completed_by,
@@ -134,14 +149,12 @@ async def get_requirement_by_id(
 async def create_requirement(
     db: AsyncSession, current_user: User, payload: RequirementCreate
 ) -> Requirement:
-    # Role check: Employee cannot create jobs
     if current_user.role == "employee":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employees cannot create Job Openings. Employees only complete assigned jobs.",
         )
 
-    # Client can only create for their own company
     client_id = payload.client_id
     if current_user.role == "client":
         if not current_user.client_id:
@@ -164,6 +177,18 @@ async def create_requirement(
         role_part = "".join(c for c in job_title if c.isalnum())[:4].upper()
         role_code = f"{prefix}-{role_part}-{uuid.uuid4().hex[:4].upper()}"
 
+    assignment_type = "all"
+    assigned_emp_id = None
+    if payload.assigned_employee and payload.assigned_employee != "ALL":
+        try:
+            assigned_emp_id = uuid.UUID(str(payload.assigned_employee))
+            assignment_type = "individual"
+        except Exception:
+            pass
+    elif payload.assigned_employee_id:
+        assigned_emp_id = payload.assigned_employee_id
+        assignment_type = "individual"
+
     req = Requirement(
         client_id=client_id,
         company=payload.company.strip(),
@@ -174,6 +199,8 @@ async def create_requirement(
         priority=payload.priority or "Medium",
         notes=payload.notes.strip() if payload.notes else None,
         status=payload.status or "active",
+        assignment_type=assignment_type,
+        assigned_employee_id=assigned_emp_id,
         created_by=current_user.id,
     )
     db.add(req)
@@ -189,11 +216,13 @@ async def create_requirement(
                 "role_code": req.role_code,
                 "company": req.company,
                 "job_title": req.job_title,
+                "assignment_type": assignment_type,
                 "message": f"{actor_label} created {req.company} – {req.job_title}.",
             },
         )
     )
     await db.flush()
+    invalidate_dashboard_cache()
     return req
 
 
@@ -225,157 +254,74 @@ async def update_requirement(
     if payload.status is not None:
         req.status = payload.status
 
-    actor_label = "Admin" if current_user.role == "admin" else ("Client" if current_user.role == "client" else "Sub-Admin")
-    db.add(
-        ActivityLog(
-            user_id=current_user.id,
-            action="requirement_updated",
-            details={
-                "requirement_id": str(req.id),
-                "company": req.company,
-                "job_title": req.job_title or req.role,
-                "message": f"{actor_label} updated {req.company} – {req.job_title or req.role}.",
-            },
-        )
-    )
+    if payload.assigned_employee is not None:
+        if payload.assigned_employee == "ALL":
+            req.assignment_type = "all"
+            req.assigned_employee_id = None
+        else:
+            try:
+                req.assigned_employee_id = uuid.UUID(str(payload.assigned_employee))
+                req.assignment_type = "individual"
+            except Exception:
+                pass
+    elif payload.assigned_employee_id is not None:
+        req.assigned_employee_id = payload.assigned_employee_id
+        req.assignment_type = "individual"
+    elif payload.assignment_type == "all":
+        req.assignment_type = "all"
+        req.assigned_employee_id = None
+
     await db.flush()
+    invalidate_dashboard_cache()
     return req
 
 
-async def mark_requirement_done(db: AsyncSession, req_id: uuid.UUID, current_user: User) -> Requirement:
-    if current_user.role != "employee":
-        raise HTTPException(status_code=403, detail="Only employees can mark job openings as completed.")
-
-    req = await get_requirement_by_id(db, req_id, current_user)
-    if not req:
-        raise HTTPException(status_code=404, detail="Job opening not found")
+async def complete_requirement(
+    db: AsyncSession, current_user: User, req: Requirement
+) -> Requirement:
+    if req.status == "done":
+        return req
 
     req.status = "done"
     req.completed_by = current_user.id
     req.completed_at = datetime.now(timezone.utc)
-    await db.flush()
 
-    job_name = f"{req.company} – {req.job_title or req.role}"
-
-    # 1. Notify Admins
-    admins = (await db.execute(select(User).where(User.role == "admin", User.is_active == True))).scalars().all()
-    for adm in admins:
-        await create_notification(
-            db=db,
-            user_id=adm.id,
-            title="Job Opening Completed",
-            message=f"{current_user.name} completed {job_name}.",
-            notification_type="success",
-        )
-
-    # 2. Notify Client users
-    client_users = (await db.execute(select(User).where(User.client_id == req.client_id, User.is_active == True))).scalars().all()
-    for cu in client_users:
-        await create_notification(
-            db=db,
-            user_id=cu.id,
-            title="Job Opening Completed",
-            message=f"Your {job_name} job has been completed.",
-            notification_type="success",
-        )
-
-    # 3. Notify Employee
-    if current_user.role == "employee":
-        await create_notification(
-            db=db,
-            user_id=current_user.id,
-            title="Job Completed",
-            message=f"Job {job_name} marked as completed.",
-            notification_type="success",
-        )
-
-    # 4. Activity Log
     db.add(
         ActivityLog(
             user_id=current_user.id,
             action="requirement_completed",
             details={
                 "requirement_id": str(req.id),
+                "role_code": req.role_code,
                 "company": req.company,
-                "job_title": req.job_title or req.role,
-                "message": f"{current_user.name} marked {job_name} as completed.",
+                "job_title": req.job_title,
+                "message": f"Recruiter {current_user.name} marked {req.company} – {req.job_title} as Done.",
             },
         )
     )
     await db.flush()
+    invalidate_dashboard_cache()
     return req
 
 
-async def reopen_requirement(db: AsyncSession, req_id: uuid.UUID, current_user: User) -> Requirement:
-    req = await get_requirement_by_id(db, req_id, current_user)
-    if not req:
-        raise HTTPException(status_code=404, detail="Job opening not found")
-
-    req.status = "active"
-    req.completed_by = None
-    req.completed_at = None
-    await db.flush()
-
-    db.add(
-        ActivityLog(
-            user_id=current_user.id,
-            action="requirement_reopened",
-            details={"requirement_id": str(req.id), "company": req.company, "job_title": req.job_title or req.role},
-        )
-    )
-    await db.flush()
-    return req
-
-
-async def archive_requirement(db: AsyncSession, req_id: uuid.UUID, current_user: User) -> Requirement:
-    req = await get_requirement_by_id(db, req_id, current_user)
-    if not req:
-        raise HTTPException(status_code=404, detail="Job opening not found")
-
+async def delete_requirement(
+    db: AsyncSession, current_user: User, req: Requirement
+) -> None:
     if current_user.role == "employee":
-        raise HTTPException(status_code=403, detail="Employees cannot archive job openings.")
+        raise HTTPException(status_code=403, detail="Employees cannot delete job openings.")
 
-    req.status = "archived"
-    await db.flush()
-
-    db.add(
-        ActivityLog(
-            user_id=current_user.id,
-            action="requirement_archived",
-            details={"requirement_id": str(req.id), "company": req.company, "job_title": req.job_title or req.role},
-        )
-    )
-    await db.flush()
-    return req
-
-
-async def safe_delete_requirement(db: AsyncSession, req_id: uuid.UUID, current_user: User) -> None:
-    req = await get_requirement_by_id(db, req_id, current_user)
-    if not req:
-        raise HTTPException(status_code=404, detail="Job opening not found")
-
-    if current_user.role not in ["admin", "sub_admin"]:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    # Check dependencies
-    res_count = (await db.execute(select(func.count(Resume.id)).where(Resume.requirement_id == req_id))).scalar() or 0
-    app_count = (await db.execute(select(func.count(Application.id)).where(Application.requirement_id == req_id))).scalar() or 0
+    res_count = (
+        await db.execute(select(func.count(Resume.id)).where(Resume.requirement_id == req.id))
+    ).scalar() or 0
+    app_count = (
+        await db.execute(select(func.count(Application.id)).where(Application.requirement_id == req.id))
+    ).scalar() or 0
 
     if res_count > 0 or app_count > 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete job opening with linked resumes or applications. Archive instead.",
-        )
+        req.status = "archived"
+        await db.flush()
+    else:
+        await db.delete(req)
+        await db.flush()
 
-    comp = req.company
-    job_t = req.job_title or req.role
-    await db.delete(req)
-
-    db.add(
-        ActivityLog(
-            user_id=current_user.id,
-            action="requirement_deleted",
-            details={"requirement_id": str(req_id), "company": comp, "job_title": job_t},
-        )
-    )
-    await db.flush()
+    invalidate_dashboard_cache()

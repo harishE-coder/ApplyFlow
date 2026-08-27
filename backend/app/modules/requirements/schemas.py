@@ -13,6 +13,9 @@ class RequirementBase(BaseModel):
     priority: str = "Medium"      # "High", "Medium", "Low"
     notes: str | None = None
     status: str = "active"        # "active", "done", "archived"
+    assignment_type: str = "all"  # "all" or "individual"
+    assigned_employee_id: uuid.UUID | None = None
+    assigned_employee: str | None = None  # "ALL" or string UUID
 
 
 class RequirementCreate(RequirementBase):
@@ -30,6 +33,13 @@ class RequirementCreate(RequirementBase):
             prefix = "".join(c for c in self.company if c.isalnum())[:3].upper() or "JOB"
             role_part = "".join(c for c in (self.job_title or "ROLE") if c.isalnum())[:4].upper()
             self.role_code = f"{prefix}-{role_part}-01"
+
+        if self.assigned_employee == "ALL" or not self.assigned_employee_id:
+            self.assignment_type = "all"
+            self.assigned_employee_id = None
+        else:
+            self.assignment_type = "individual"
+
         return self
 
 
@@ -42,6 +52,9 @@ class RequirementUpdate(BaseModel):
     priority: str | None = None
     notes: str | None = None
     status: str | None = None
+    assignment_type: str | None = None
+    assigned_employee_id: uuid.UUID | None = None
+    assigned_employee: str | None = None
 
 
 class RequirementResponse(BaseModel):
@@ -56,6 +69,9 @@ class RequirementResponse(BaseModel):
     priority: str = "Medium"
     notes: str | None = None
     status: str = "active"
+    assignment_type: str = "all"
+    assigned_employee_id: uuid.UUID | None = None
+    assigned_employee_name: str | None = None
     created_by: uuid.UUID | None = None
     creator_name: str | None = None
     completed_by: uuid.UUID | None = None
@@ -78,5 +94,7 @@ class RequirementShort(BaseModel):
     job_url: str | None = None
     priority: str = "Medium"
     status: str
+    assignment_type: str = "all"
+    assigned_employee_id: uuid.UUID | None = None
 
     model_config = {"from_attributes": True}

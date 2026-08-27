@@ -41,6 +41,9 @@ export function RequirementsPage() {
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'done' | 'archived'
   const [requirements, setRequirements] = useState([]);
   const [clients, setClients] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [assignedEmployee, setAssignedEmployee] = useState('ALL');
+  const [editAssignedEmployee, setEditAssignedEmployee] = useState('ALL');
   const [loading, setLoading] = useState(true);
 
   // Filter states
@@ -97,6 +100,7 @@ export function RequirementsPage() {
 
   useEffect(() => {
     api.get('/clients').then((res) => setClients(res.data || [])).catch(() => {});
+    api.get('/users?role=employee').then((res) => setEmployees(res.data || [])).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -110,6 +114,7 @@ export function RequirementsPage() {
     setJobUrl('');
     setPriority('Medium');
     setNotes('');
+    setAssignedEmployee('ALL');
     setClientId(isClient ? user?.client_id || '' : clients[0]?.id || '');
     setIsCreateOpen(true);
   };
@@ -137,6 +142,7 @@ export function RequirementsPage() {
         priority,
         notes: notes.trim() || null,
         client_id: targetClientId,
+        assigned_employee: assignedEmployee,
       });
 
       success('Job Opening Created', `${company} – ${jobTitle} added to task board.`);
@@ -158,6 +164,7 @@ export function RequirementsPage() {
     setEditPriority(req.priority || 'Medium');
     setEditNotes(req.notes || '');
     setEditClientId(req.client_id);
+    setEditAssignedEmployee(req.assigned_employee_id || 'ALL');
     setIsEditOpen(true);
   };
 
@@ -174,6 +181,7 @@ export function RequirementsPage() {
         job_url: editJobUrl.trim() || null,
         priority: editPriority,
         notes: editNotes.trim() || null,
+        assigned_employee: editAssignedEmployee,
       });
 
       success('Job Opening Updated', `${editCompany} – ${editJobTitle} updated successfully.`);
@@ -519,6 +527,17 @@ export function RequirementsPage() {
                         <span className="font-semibold text-[#081226] block">
                           {req.job_title || req.role}
                         </span>
+                        <span className="text-[11px] font-medium text-[#64748B] flex items-center gap-1 mt-0.5">
+                          {req.assignment_type === 'all' || !req.assigned_employee_name ? (
+                            <span className="px-1.5 py-0.5 rounded bg-blue-50 text-[#0D6EFD] font-bold">
+                              🌐 All Employees
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-bold">
+                              👤 {req.assigned_employee_name}
+                            </span>
+                          )}
+                        </span>
                       </td>
 
                       {/* 3. Job Link */}
@@ -659,6 +678,27 @@ export function RequirementsPage() {
 
           <div>
             <label className="text-small font-semibold text-[#081226] block mb-1.5">
+              Assign Recruiter
+            </label>
+            <select
+              value={assignedEmployee}
+              onChange={(e) => setAssignedEmployee(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-small text-[#081226] focus:outline-none focus:border-[#0D6EFD] focus:bg-white"
+            >
+              <option value="ALL">• All Employees (Global)</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name} ({emp.email})
+                </option>
+              ))}
+            </select>
+            <p className="text-caption text-[#64748B] mt-1">
+              "All Employees" makes this job opening visible to every active recruiter.
+            </p>
+          </div>
+
+          <div>
+            <label className="text-small font-semibold text-[#081226] block mb-1.5">
               Priority
             </label>
             <select
@@ -724,6 +764,24 @@ export function RequirementsPage() {
             value={editJobUrl}
             onChange={(e) => setEditJobUrl(e.target.value)}
           />
+
+          <div>
+            <label className="text-small font-semibold text-[#081226] block mb-1.5">
+              Assign Recruiter
+            </label>
+            <select
+              value={editAssignedEmployee}
+              onChange={(e) => setEditAssignedEmployee(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl text-small text-[#081226] focus:outline-none focus:border-[#0D6EFD] focus:bg-white"
+            >
+              <option value="ALL">• All Employees (Global)</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name} ({emp.email})
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div>
             <label className="text-small font-semibold text-[#081226] block mb-1.5">

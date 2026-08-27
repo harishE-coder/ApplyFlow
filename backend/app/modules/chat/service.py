@@ -55,7 +55,7 @@ async def get_or_create_room(db: AsyncSession, client_id: uuid.UUID) -> ChatRoom
     ).scalar_one_or_none()
 
     if not room:
-        room = ChatRoom(client_id=client_id, status="active")
+        room = ChatRoom(id=uuid.uuid4(), client_id=client_id, status="active")
         db.add(room)
         await db.flush()
 
@@ -65,97 +65,133 @@ async def get_or_create_room(db: AsyncSession, client_id: uuid.UUID) -> ChatRoom
 async def get_rooms_for_user(db: AsyncSession, user: User) -> ChatRoomsListResponse:
     allowed = await get_allowed_client_ids(db, user)
 
-    # 1. Rooms & last message in 1 query
-    client_filter = ""
-    params = {"user_id": user.id}
+    # 1. Fetch accessible active clients
+    client_q = select(Client).where(Client.is_active == True).order_by(Client.company_name)  # noqa: E712
     if allowed is not None:
         if not allowed:
             return ChatRoomsListResponse(items=[], total_unread=0)
-        client_filter = "AND c.id = ANY(:allowed_cids)"
-        params["allowed_cids"] = list(allowed)
+        client_q = client_q.where(Client.id.in_(allowed))
 
-    q1 = text(f"""
-        SELECT c.id AS client_id, c.company_name, r.id AS room_id, COALESCE(r.status, 'active') AS room_status,
-               lm.message AS last_message, u.name AS last_sender, lm.created_at AS last_message_at
-        FROM clients c
-        LEFT JOIN chat_rooms r ON r.client_id = c.id
-        LEFT JOIN LATERAL (
-            SELECT m.message, m.sender_id, m.created_at
-            FROM chat_messages m
-            WHERE m.room_id = r.id
-            ORDER BY m.created_at DESC
-            LIMIT 1
-        ) lm ON true
-        LEFT JOIN users u ON u.id = lm.sender_id
-        WHERE c.is_active = true {client_filter}
-        ORDER BY c.company_name;
-    """)
-    rooms_rows = (await db.execute(q1, params)).mappings().all()
-    if not rooms_rows:
+    clients = (await db.execute(client_q)).scalars().all()
+    if not clients:
         return ChatRoomsListResponse(items=[], total_unread=0)
 
-    # If any active client is missing a room in DB, ensure it exists
-    missing_cids = [r["client_id"] for r in rooms_rows if r["room_id"] is None]
-    if missing_cids:
-        for cid in missing_cids:
-            db.add(ChatRoom(id=uuid.uuid4(), client_id=cid, status="active"))
-        await db.commit()
-        rooms_rows = (await db.execute(q1, params)).mappings().all()
+    client_ids = [c.id for c in clients]
+    client_map = {c.id: c.company_name for c in clients}
 
-    client_ids = [r["client_id"] for r in rooms_rows]
-    params["client_ids"] = client_ids
+    # 2. Get or create chat rooms for each client
+    rooms_res = await db.execute(
+        select(ChatRoom).where(ChatRoom.client_id.in_(client_ids))
+    )
+    existing_rooms = rooms_res.scalars().all()
+    room_by_cid = {r.client_id: r for r in existing_rooms}
 
-    # 2. Participants in 1 query
-    q2 = text("""
-        SELECT c.id AS client_id, u.id, u.name, u.role, COALESCE(ec.is_primary, false) AS is_primary
-        FROM clients c
-        JOIN users u ON (
-            u.role = 'admin' 
-            OR u.id IN (SELECT sub_admin_id FROM sub_admin_assignments WHERE client_id = c.id AND active = true)
-            OR u.id IN (SELECT employee_id FROM employee_clients WHERE client_id = c.id AND active = true)
-            OR (u.client_id = c.id AND u.role = 'client')
+    new_rooms = []
+    for c in clients:
+        if c.id not in room_by_cid:
+            new_r = ChatRoom(id=uuid.uuid4(), client_id=c.id, status="active")
+            db.add(new_r)
+            new_rooms.append(new_r)
+            room_by_cid[c.id] = new_r
+
+    if new_rooms:
+        await db.flush()
+
+    all_room_ids = [r.id for r in room_by_cid.values()]
+
+    # 3. Batch query participants
+    # Admins
+    admins = (await db.execute(select(User).where(User.role == "admin", User.is_active == True))).scalars().all()
+    admin_parts = [ChatParticipant(id=a.id, name=a.name, role=a.role, is_primary=False) for a in admins]
+
+    # Sub-Admins
+    sa_res = await db.execute(
+        select(SubAdminAssignment.client_id, User.id, User.name, User.role)
+        .join(User, SubAdminAssignment.sub_admin_id == User.id)
+        .where(SubAdminAssignment.client_id.in_(client_ids), SubAdminAssignment.active == True, User.is_active == True)
+    )
+    sa_map = {}
+    for cid, uid, uname, urole in sa_res.all():
+        sa_map.setdefault(cid, []).append(ChatParticipant(id=uid, name=uname, role=urole, is_primary=False))
+
+    # Employees
+    emp_res = await db.execute(
+        select(EmployeeClient.client_id, User.id, User.name, User.role, EmployeeClient.is_primary)
+        .join(User, EmployeeClient.employee_id == User.id)
+        .where(EmployeeClient.client_id.in_(client_ids), EmployeeClient.active == True, User.is_active == True)
+    )
+    emp_map = {}
+    for cid, uid, uname, urole, is_prim in emp_res.all():
+        emp_map.setdefault(cid, []).append(ChatParticipant(id=uid, name=uname, role=urole, is_primary=is_prim))
+
+    # Client users
+    cl_res = await db.execute(
+        select(User.client_id, User.id, User.name, User.role)
+        .where(User.client_id.in_(client_ids), User.role == "client", User.is_active == True)
+    )
+    cl_map = {}
+    for cid, uid, uname, urole in cl_res.all():
+        cl_map.setdefault(cid, []).append(ChatParticipant(id=uid, name=uname, role=urole, is_primary=False))
+
+    # 4. Batch query latest message per room
+    latest_msg_q = (
+        select(ChatMessage)
+        .where(ChatMessage.room_id.in_(all_room_ids))
+        .options(selectinload(ChatMessage.sender))
+        .order_by(ChatMessage.created_at.desc())
+    )
+    all_msgs = (await db.execute(latest_msg_q)).scalars().all()
+    latest_by_room = {}
+    for m in all_msgs:
+        if m.room_id not in latest_by_room:
+            latest_by_room[m.room_id] = m
+
+    # 5. Batch query unread count per room
+    reads_res = await db.execute(
+        select(ChatRead).where(ChatRead.user_id == user.id, ChatRead.room_id.in_(all_room_ids))
+    )
+    read_map = {r.room_id: r for r in reads_res.scalars().all()}
+
+    unread_map = {}
+    for r_id in all_room_ids:
+        r_rec = read_map.get(r_id)
+        count_q = select(func.count(ChatMessage.id)).where(
+            ChatMessage.room_id == r_id,
+            ChatMessage.sender_id != user.id,
         )
-        LEFT JOIN employee_clients ec ON ec.client_id = c.id AND ec.employee_id = u.id AND ec.active = true
-        WHERE c.id = ANY(:client_ids) AND u.is_active = true
-        ORDER BY u.name;
-    """)
-    part_rows = (await db.execute(q2, params)).mappings().all()
-    part_map = {}
-    for p in part_rows:
-        part_map.setdefault(p["client_id"], []).append(
-            ChatParticipant(id=p["id"], name=p["name"], role=p["role"], is_primary=p["is_primary"])
-        )
+        if r_rec and r_rec.last_read_at:
+            count_q = count_q.where(ChatMessage.created_at > r_rec.last_read_at)
+        unread_cnt = (await db.execute(count_q)).scalar() or 0
+        unread_map[r_id] = unread_cnt
 
-    # 3. Unread counts in 1 query
-    q3 = text("""
-        SELECT r.id AS room_id, COUNT(m.id) AS unread_count
-        FROM chat_rooms r
-        JOIN chat_messages m ON m.room_id = r.id AND m.sender_id != :user_id
-        LEFT JOIN chat_reads cr ON cr.room_id = r.id AND cr.user_id = :user_id
-        WHERE r.client_id = ANY(:client_ids) AND (cr.last_read_at IS NULL OR m.created_at > cr.last_read_at)
-        GROUP BY r.id;
-    """)
-    unread_rows = (await db.execute(q3, params)).mappings().all()
-    unread_map = {u["room_id"]: u["unread_count"] for u in unread_rows}
-
+    # 6. Build response
     rooms_out = []
     total_unread = 0
-    for r in rooms_rows:
-        room_id = r["room_id"]
-        client_id = r["client_id"]
-        unread = unread_map.get(room_id, 0)
+    for c in clients:
+        room = room_by_cid.get(c.id)
+        if not room:
+            continue
+        unread = unread_map.get(room.id, 0)
         total_unread += unread
+
+        last_m = latest_by_room.get(room.id)
+        parts = (
+            admin_parts
+            + sa_map.get(c.id, [])
+            + emp_map.get(c.id, [])
+            + cl_map.get(c.id, [])
+        )
 
         rooms_out.append(
             ChatRoomResponse(
-                id=room_id,
-                client_id=client_id,
-                client_name=r["company_name"],
-                status=r["room_status"],
-                participants=part_map.get(client_id, []),
-                last_message=r["last_message"],
-                last_message_sender=r["last_sender"],
-                last_message_at=r["last_message_at"],
+                id=room.id,
+                client_id=c.id,
+                client_name=c.company_name,
+                status=room.status or "active",
+                participants=parts,
+                last_message=last_m.message if last_m else None,
+                last_message_sender=last_m.sender.name if (last_m and last_m.sender) else None,
+                last_message_at=last_m.created_at if last_m else None,
                 unread_count=unread,
             )
         )
@@ -163,85 +199,8 @@ async def get_rooms_for_user(db: AsyncSession, user: User) -> ChatRoomsListRespo
     return ChatRoomsListResponse(items=rooms_out, total_unread=total_unread)
 
 
-async def _get_room_participants(db: AsyncSession, client_id: uuid.UUID) -> list[ChatParticipant]:
-    participants = []
-
-    # 1. Admin
-    admins = (await db.execute(select(User).where(User.role == "admin", User.is_active == True))).scalars().all()
-    for a in admins:
-        participants.append(ChatParticipant(id=a.id, name=a.name, role=a.role, is_primary=False))
-
-    # 2. Assigned Sub-Admins
-    sub_admin_assignments = (
-        await db.execute(
-            select(User)
-            .join(SubAdminAssignment, SubAdminAssignment.sub_admin_id == User.id)
-            .where(
-                SubAdminAssignment.client_id == client_id,
-                SubAdminAssignment.active == True,
-                User.is_active == True,
-            )
-        )
-    ).scalars().all()
-    for sa in sub_admin_assignments:
-        participants.append(ChatParticipant(id=sa.id, name=sa.name, role=sa.role, is_primary=False))
-
-    # 3. Assigned Employees
-    emp_assignments = (
-        await db.execute(
-            select(User, EmployeeClient.is_primary)
-            .join(EmployeeClient, EmployeeClient.employee_id == User.id)
-            .where(EmployeeClient.client_id == client_id, EmployeeClient.active == True, User.is_active == True)
-        )
-    ).all()
-    for u, is_prim in emp_assignments:
-        participants.append(ChatParticipant(id=u.id, name=u.name, role=u.role, is_primary=is_prim))
-
-    # 4. Client Users
-    client_users = (
-        await db.execute(select(User).where(User.client_id == client_id, User.role == "client", User.is_active == True))
-    ).scalars().all()
-    for cu in client_users:
-        participants.append(ChatParticipant(id=cu.id, name=cu.name, role=cu.role, is_primary=False))
-
-    return participants
-
-
-async def _get_unread_count_for_room(db: AsyncSession, user_id: uuid.UUID, room_id: uuid.UUID) -> int:
-    read_record = (
-        await db.execute(
-            select(ChatRead).where(ChatRead.user_id == user_id, ChatRead.room_id == room_id)
-        )
-    ).scalar_one_or_none()
-
-    if not read_record or not read_record.last_read_message_id:
-        query = select(func.count(ChatMessage.id)).where(
-            ChatMessage.room_id == room_id,
-            ChatMessage.sender_id != user_id,
-        )
-        return (await db.execute(query)).scalar() or 0
-
-    last_read_msg = (
-        await db.execute(select(ChatMessage).where(ChatMessage.id == read_record.last_read_message_id))
-    ).scalar_one_or_none()
-
-    if not last_read_msg:
-        query = select(func.count(ChatMessage.id)).where(
-            ChatMessage.room_id == room_id,
-            ChatMessage.sender_id != user_id,
-        )
-        return (await db.execute(query)).scalar() or 0
-
-    query = select(func.count(ChatMessage.id)).where(
-        ChatMessage.room_id == room_id,
-        ChatMessage.sender_id != user_id,
-        ChatMessage.created_at > last_read_msg.created_at,
-    )
-    return (await db.execute(query)).scalar() or 0
-
-
 async def get_messages(
-    db: AsyncSession, room_id: uuid.UUID, user: User, limit: int = 20, before_id: uuid.UUID | None = None
+    db: AsyncSession, room_id: uuid.UUID, user: User, limit: int = 50, before_id: uuid.UUID | None = None
 ) -> ChatMessagesListResponse:
     await check_room_access(db, user, room_id)
 
@@ -289,7 +248,6 @@ async def get_messages(
         )
 
     total = res_count.scalar() or 0
-
     return ChatMessagesListResponse(items=items, has_more=has_more, total=total)
 
 
@@ -304,14 +262,20 @@ async def send_message(
 ) -> ChatMessageResponse:
     room = await check_room_access(db, user, room_id)
 
-    # Check read-only / inactive client state
-    if room.status == "read_only" or (room.client and not room.client.is_active):
+    if room.status == "locked" and user.role not in ("admin", "sub_admin"):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This chat room is read-only because the client account is inactive or locked.",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This chat room has been locked by an administrator. Messages cannot be sent.",
+        )
+
+    if room.status == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This chat room is archived. Messages cannot be sent.",
         )
 
     msg = ChatMessage(
+        id=uuid.uuid4(),
         room_id=room_id,
         sender_id=user.id,
         message=text,
@@ -321,30 +285,39 @@ async def send_message(
     db.add(msg)
     await db.flush()
 
-    await mark_read(db, room_id, user, msg.id)
+    # Automatically mark read for the sender
+    read_record = (
+        await db.execute(
+            select(ChatRead).where(ChatRead.user_id == user.id, ChatRead.room_id == room_id)
+        )
+    ).scalar_one_or_none()
 
-    # Notifications
-    participants = await _get_room_participants(db, room.client_id)
-    client_name = room.client.company_name if room.client else "Chat"
-    for p in participants:
-        if p.id != user.id:
-            db.add(
-                Notification(
-                    user_id=p.id,
-                    title=f"New message in {client_name}",
-                    message=f"{user.name}: {text[:100]}",
-                    type="chat_message",
-                )
-            )
+    if not read_record:
+        read_record = ChatRead(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            room_id=room_id,
+            last_read_message_id=msg.id,
+            last_read_at=datetime.now(timezone.utc),
+        )
+        db.add(read_record)
+    else:
+        read_record.last_read_message_id = msg.id
+        read_record.last_read_at = datetime.now(timezone.utc)
 
+    await db.flush()
+    invalidate_chat_cache()
+
+    sender_info = MessageSender(id=user.id, name=user.name, role=user.role)
     return ChatMessageResponse(
         id=msg.id,
         room_id=msg.room_id,
-        sender=MessageSender(id=user.id, name=user.name, role=user.role),
+        sender=sender_info,
         message=msg.message,
         attachment_type=msg.attachment_type,
         attachment_reference=msg.attachment_reference,
-        created_at=msg.created_at,
+        created_at=msg.created_at or datetime.now(timezone.utc),
+        edited_at=None,
     )
 
 
@@ -352,89 +325,162 @@ async def share_resume(
     db: AsyncSession, room_id: uuid.UUID, user: User, resume_id: uuid.UUID
 ) -> ChatMessageResponse:
     room = await check_room_access(db, user, room_id)
-    resume = (await db.execute(select(Resume).where(Resume.id == resume_id))).scalar_one_or_none()
-    if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
 
-    text = f"📄 Shared Resume: {resume.candidate_name} ({resume.company} - {resume.role})"
+    resume = (
+        await db.execute(
+            select(Resume).where(Resume.id == resume_id, Resume.client_id == room.client_id)
+        )
+    ).scalar_one_or_none()
+
+    if not resume:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume not found or does not belong to this service client.",
+        )
+
+    text = f"📄 Shared Candidate: {resume.candidate_name} ({resume.company} – {resume.role})"
     return await send_message(
-        db, room_id, user, text, attachment_type="resume", attachment_reference=str(resume.id)
+        db,
+        room_id,
+        user,
+        text,
+        attachment_type="resume",
+        attachment_reference=str(resume.id),
+        attachment_filename=resume.original_filename,
     )
 
 
 async def mark_read(
-    db: AsyncSession, room_id: uuid.UUID, user: User, message_id: uuid.UUID
+    db: AsyncSession, room_id: uuid.UUID, user: User, message_id: uuid.UUID | None = None
 ) -> None:
-    read_rec = (
+    now = datetime.now(timezone.utc)
+    if not message_id:
+        last_msg = (
+            await db.execute(
+                select(ChatMessage.id)
+                .where(ChatMessage.room_id == room_id)
+                .order_by(ChatMessage.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        message_id = last_msg
+
+    read_record = (
         await db.execute(
             select(ChatRead).where(ChatRead.user_id == user.id, ChatRead.room_id == room_id)
         )
     ).scalar_one_or_none()
 
-    if read_rec:
-        read_rec.last_read_message_id = message_id
-        read_rec.last_read_at = datetime.now(timezone.utc)
-    else:
-        read_rec = ChatRead(
+    if not read_record:
+        read_record = ChatRead(
+            id=uuid.uuid4(),
             user_id=user.id,
             room_id=room_id,
             last_read_message_id=message_id,
-            last_read_at=datetime.now(timezone.utc),
+            last_read_at=now,
         )
-        db.add(read_rec)
+        db.add(read_record)
+    else:
+        read_record.last_read_message_id = message_id
+        read_record.last_read_at = now
 
     await db.flush()
     invalidate_chat_cache()
 
 
-async def delete_message(db: AsyncSession, message_id: uuid.UUID, user: User) -> dict:
-    msg = (await db.execute(select(ChatMessage).where(ChatMessage.id == message_id))).scalar_one_or_none()
+async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
+    cache_key = f"chat_unread:{str(user.id)}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return UnreadCountResponse(count=cached)
+
+    allowed = await get_allowed_client_ids(db, user)
+    client_q = select(ChatRoom.id).join(Client, ChatRoom.client_id == Client.id).where(Client.is_active == True)  # noqa: E712
+    if allowed is not None:
+        if not allowed:
+            return UnreadCountResponse(count=0)
+        client_q = client_q.where(Client.id.in_(allowed))
+
+    room_ids = (await db.execute(client_q)).scalars().all()
+    if not room_ids:
+        return UnreadCountResponse(count=0)
+
+    reads_res = await db.execute(
+        select(ChatRead).where(ChatRead.user_id == user.id, ChatRead.room_id.in_(room_ids))
+    )
+    read_map = {r.room_id: r.last_read_at for r in reads_res.scalars().all()}
+
+    total_unread = 0
+    for r_id in room_ids:
+        last_read_dt = read_map.get(r_id)
+        q = select(func.count(ChatMessage.id)).where(
+            ChatMessage.room_id == r_id,
+            ChatMessage.sender_id != user.id,
+        )
+        if last_read_dt:
+            q = q.where(ChatMessage.created_at > last_read_dt)
+        cnt = (await db.execute(q)).scalar() or 0
+        total_unread += cnt
+
+    cache.set(cache_key, total_unread, ttl=30.0, tags={"chat"})
+    return UnreadCountResponse(count=total_unread)
+
+
+async def delete_message(
+    db: AsyncSession, message_id: uuid.UUID, user: User
+) -> dict:
+    msg = (
+        await db.execute(
+            select(ChatMessage).where(ChatMessage.id == message_id)
+        )
+    ).scalar_one_or_none()
+
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
 
     if user.role != "admin" and msg.sender_id != user.id:
-        raise HTTPException(status_code=403, detail="You can only delete your own messages")
+        raise HTTPException(status_code=403, detail="Forbidden: You can only delete your own messages")
 
     room_id = str(msg.room_id)
     await db.delete(msg)
     await db.flush()
     invalidate_chat_cache()
-    return {"message": "Message deleted", "room_id": room_id}
+    return {"success": True, "room_id": room_id}
 
 
 async def lock_room(db: AsyncSession, room_id: uuid.UUID, user: User) -> dict:
-    room = await check_room_access(db, user, room_id)
     if user.role not in ("admin", "sub_admin"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    room.status = "read_only"
+        raise HTTPException(status_code=403, detail="Only Admins can lock rooms")
+    room = await check_room_access(db, user, room_id)
+    room.status = "locked"
     await db.flush()
-    return {"message": "Chat room locked (read-only)"}
+    invalidate_chat_cache()
+    return {"success": True, "status": "locked"}
 
 
 async def unlock_room(db: AsyncSession, room_id: uuid.UUID, user: User) -> dict:
-    room = await check_room_access(db, user, room_id)
     if user.role not in ("admin", "sub_admin"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
+        raise HTTPException(status_code=403, detail="Only Admins can unlock rooms")
+    room = await check_room_access(db, user, room_id)
     room.status = "active"
     await db.flush()
-    return {"message": "Chat room unlocked (active)"}
+    invalidate_chat_cache()
+    return {"success": True, "status": "active"}
 
 
 async def archive_room(db: AsyncSession, room_id: uuid.UUID, user: User) -> dict:
-    room = await check_room_access(db, user, room_id)
     if user.role not in ("admin", "sub_admin"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
+        raise HTTPException(status_code=403, detail="Only Admins can archive rooms")
+    room = await check_room_access(db, user, room_id)
     room.status = "archived"
     await db.flush()
-    return {"message": "Chat room archived"}
+    invalidate_chat_cache()
+    return {"success": True, "status": "archived"}
 
 
-async def export_room_chat(db: AsyncSession, room_id: uuid.UUID, user: User) -> list[dict]:
+async def export_room_chat(db: AsyncSession, room_id: uuid.UUID, user: User) -> dict:
     room = await check_room_access(db, user, room_id)
-    msgs = (
+    messages = (
         await db.execute(
             select(ChatMessage)
             .where(ChatMessage.room_id == room_id)
@@ -443,54 +489,16 @@ async def export_room_chat(db: AsyncSession, room_id: uuid.UUID, user: User) -> 
         )
     ).scalars().all()
 
-    return [
-        {
-            "id": str(m.id),
-            "sender": m.sender.name,
-            "role": m.sender.role,
-            "message": m.message,
-            "created_at": m.created_at.isoformat(),
-        }
-        for m in msgs
-    ]
-
-
-from app.core.cache import cache
-
-async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
-    """Lightweight unread count query for header polling."""
-    cache_key = f"chat_unread:{str(user.id)}"
-    cached = cache.get(cache_key)
-    if cached:
-        print(f"\033[92m[CACHE HIT] Chat Unread ({cache_key})\033[0m")
-        return cached
-
-    allowed = await get_allowed_client_ids(db, user)
-
-    from sqlalchemy import or_
-    sub_read = (
-        select(ChatRead.room_id, ChatRead.last_read_at)
-        .where(ChatRead.user_id == user.id)
-        .subquery()
-    )
-
-    q = (
-        select(func.count(ChatMessage.id))
-        .join(ChatRoom, ChatMessage.room_id == ChatRoom.id)
-        .outerjoin(sub_read, sub_read.c.room_id == ChatMessage.room_id)
-        .where(
-            ChatMessage.sender_id != user.id,
-            or_(
-                sub_read.c.last_read_at.is_(None),
-                ChatMessage.created_at > sub_read.c.last_read_at,
-            ),
+    transcript = []
+    for m in messages:
+        sender_name = m.sender.name if m.sender else "Unknown"
+        transcript.append(
+            f"[{m.created_at.strftime('%Y-%m-%d %H:%M:%S')}] {sender_name}: {m.message}"
         )
-    )
-    if allowed is not None:
-        q = q.where(ChatRoom.client_id.in_(allowed))
 
-    total_unread = (await db.execute(q)).scalar() or 0
-
-    res = UnreadCountResponse(total_unread=total_unread, unread_count=total_unread)
-    cache.set(cache_key, res, ttl=10.0, tags={"chat"})
-    return res
+    return {
+        "room_id": str(room_id),
+        "client_name": room.client.company_name if room.client else "Client",
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "transcript": "\n".join(transcript),
+    }

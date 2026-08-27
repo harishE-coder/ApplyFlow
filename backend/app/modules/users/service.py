@@ -450,13 +450,94 @@ async def safe_delete_user(db: AsyncSession, user_id: uuid.UUID, current_user: U
 
 
 async def get_employee_performance_list(
-    db: AsyncSession, current_user: User, status_filter: str | None = None
+    db: AsyncSession,
+    current_user: User,
+    status_filter: str | None = None,
+    date_range: str = "today",
+    custom_date: str | None = None,
 ) -> list[EmployeePerformance]:
-    """Get list of employees with real-time performance telemetry scoped by user role."""
+    """Get list of employees with real-time performance telemetry dynamically scoped by user role and date filter."""
     today_date = date.today()
+    filter_d = None
+    num_days = 1
+    start_d = today_date
+    end_d = today_date
+
+    if custom_date and custom_date.strip():
+        try:
+            filter_d = datetime.strptime(custom_date.strip(), "%Y-%m-%d").date()
+            start_d = filter_d
+            end_d = filter_d
+        except Exception:
+            pass
+    elif date_range == "yesterday":
+        filter_d = today_date - timedelta(days=1)
+        start_d = filter_d
+        end_d = filter_d
+    elif date_range in ("last_7_days", "last 7 days", "7d"):
+        start_d = today_date - timedelta(days=6)
+        end_d = today_date
+        num_days = 7
+    elif date_range in ("last_30_days", "last 30 days", "30d"):
+        start_d = today_date - timedelta(days=29)
+        end_d = today_date
+        num_days = 30
+    elif date_range in ("this_week", "this week"):
+        start_d = today_date - timedelta(days=today_date.weekday())
+        end_d = today_date
+        num_days = (today_date - start_d).days + 1
+    elif date_range in ("this_month", "this month"):
+        start_d = today_date.replace(day=1)
+        end_d = today_date
+        num_days = today_date.day
+    else:
+        try:
+            filter_d = datetime.strptime(str(date_range).strip(), "%Y-%m-%d").date()
+            start_d = filter_d
+            end_d = filter_d
+        except Exception:
+            filter_d = today_date
+
     res_sub = select(Resume.uploaded_by, func.count(Resume.id).label("uploads_cnt")).group_by(Resume.uploaded_by).subquery()
     app_sub = select(Application.employee_id, func.count(Application.id).label("apps_cnt")).group_by(Application.employee_id).subquery()
-    tgt_sub = select(Target.employee_id, func.sum(Target.daily_target).label("target_sum")).where(Target.effective_date <= today_date, Target.status == "active").group_by(Target.employee_id).subquery()
+    tgt_sub = select(Target.employee_id, func.sum(Target.daily_target).label("target_sum")).where(Target.status == "active").group_by(Target.employee_id).subquery()
+
+    if filter_d:
+        filtered_res_sub = (
+            select(Resume.uploaded_by, func.count(Resume.id).label("filtered_uploads"))
+            .where(
+                or_(
+                    Resume.resume_date == filter_d,
+                    and_(Resume.resume_date.is_(None), func.date(Resume.upload_date) == filter_d),
+                )
+            )
+            .group_by(Resume.uploaded_by)
+            .subquery()
+        )
+        filtered_app_sub = (
+            select(Application.employee_id, func.count(Application.id).label("filtered_apps"))
+            .where(func.date(Application.applied_date) == filter_d)
+            .group_by(Application.employee_id)
+            .subquery()
+        )
+    else:
+        filtered_res_sub = (
+            select(Resume.uploaded_by, func.count(Resume.id).label("filtered_uploads"))
+            .where(
+                or_(
+                    (Resume.resume_date >= start_d) & (Resume.resume_date <= end_d),
+                    and_(Resume.resume_date.is_(None), (func.date(Resume.upload_date) >= start_d) & (func.date(Resume.upload_date) <= end_d)),
+                )
+            )
+            .group_by(Resume.uploaded_by)
+            .subquery()
+        )
+        filtered_app_sub = (
+            select(Application.employee_id, func.count(Application.id).label("filtered_apps"))
+            .where(func.date(Application.applied_date) >= start_d, func.date(Application.applied_date) <= end_d)
+            .group_by(Application.employee_id)
+            .subquery()
+        )
 
     query = (
         select(
@@ -468,10 +549,14 @@ async def get_employee_performance_list(
             User.is_active,
             func.coalesce(res_sub.c.uploads_cnt, 0).label("total_uploads"),
             func.coalesce(app_sub.c.apps_cnt, 0).label("total_apps"),
+            func.coalesce(filtered_res_sub.c.filtered_uploads, 0).label("period_uploads"),
+            func.coalesce(filtered_app_sub.c.filtered_apps, 0).label("period_apps"),
             func.coalesce(tgt_sub.c.target_sum, 25).label("daily_target"),
         )
         .outerjoin(res_sub, res_sub.c.uploaded_by == User.id)
         .outerjoin(app_sub, app_sub.c.employee_id == User.id)
+        .outerjoin(filtered_res_sub, filtered_res_sub.c.uploaded_by == User.id)
+        .outerjoin(filtered_app_sub, filtered_app_sub.c.employee_id == User.id)
         .outerjoin(tgt_sub, tgt_sub.c.employee_id == User.id)
         .where(User.role == "employee")
         .order_by(User.name)
@@ -512,11 +597,14 @@ async def get_employee_performance_list(
         assigned = emp_clients_map.get(emp.id, [])
         total_uploads = emp.total_uploads or 0
         total_apps = emp.total_apps or 0
+        period_uploads = emp.period_uploads or 0
+        period_apps = emp.period_apps or 0
         daily_target = emp.daily_target or 25
+        effective_target = daily_target if filter_d else (daily_target * num_days)
 
         completion_pct = 0.0
-        if daily_target > 0:
-            completion_pct = round(min(100.0, (total_apps / daily_target) * 100), 1)
+        if effective_target > 0:
+            completion_pct = round(min(100.0, (period_uploads / effective_target) * 100), 1)
 
         response.append(
             EmployeePerformance(
@@ -528,10 +616,10 @@ async def get_employee_performance_list(
                 is_active=emp.is_active,
                 assigned_clients=assigned,
                 total_uploads=total_uploads,
-                today_uploads=min(total_uploads, 12),
+                today_uploads=period_uploads,
                 total_applications=total_apps,
-                today_applications=min(total_apps, 8),
-                daily_target=daily_target,
+                today_applications=period_apps,
+                daily_target=effective_target,
                 completion_percentage=completion_pct,
             )
         )

@@ -111,16 +111,6 @@ const UploadQueueRow = React.memo(function UploadQueueRow({
             <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0] inline-flex items-center gap-1 w-fit">
               ✅ ServiceClient Verified
             </span>
-            {!row.company && (
-              <span className="text-[10px] text-[#64748B] flex items-center gap-0.5">
-                ⚠ Company not detected (optional)
-              </span>
-            )}
-            {!row.role && (
-              <span className="text-[10px] text-[#64748B] flex items-center gap-0.5">
-                ⚠ Role not detected (optional)
-              </span>
-            )}
           </div>
         )}
         {row.status === 'duplicate' && (
@@ -132,12 +122,23 @@ const UploadQueueRow = React.memo(function UploadQueueRow({
           </span>
         )}
         {row.status === 'needs_review' && (
-          <span
-            className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FEF2F2] text-[#EF4444] border border-[#FECACA] cursor-help"
-            title={row.error || 'Metadata requires review before upload.'}
-          >
-            {row.clientMatch === false ? '❌ Client Mismatch' : '❌ Needs Review'}
-          </span>
+          <div className="flex flex-col gap-0.5">
+            {row.error === 'ServiceClient Mismatch' ? (
+              <span
+                className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FEF2F2] text-[#EF4444] border border-[#FECACA] inline-flex items-center gap-1 w-fit"
+                title="The first segment in the filename does not match the selected Service Client."
+              >
+                ❌ ServiceClient Mismatch
+              </span>
+            ) : (
+              <span
+                className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#FFFBEB] text-[#D97706] border border-[#FDE68A] inline-flex items-center gap-1 w-fit"
+                title="Cannot detect ServiceClient from filename. Correct inline or select client."
+              >
+                ⚠ Cannot detect ServiceClient from filename
+              </span>
+            )}
+          </div>
         )}
       </td>
 
@@ -241,67 +242,98 @@ export function UploadPage() {
     return cleaned.replace(/\b\w/g, (c) => c.toUpperCase()) || 'Candidate';
   };
 
-  // Client-side Filename Parser with Relaxed Employee Validation:
-  // ServiceClient is the ONLY strict requirement; Company and Role are optional.
+  // Client-side Filename Parser (Strict ServiceClient Filename Verification Only):
+  // Format: ServiceClient_HiringCompany_Role.pdf
+  // 1. Parse filename using '_' as separator.
+  // 2. Extract first segment as ServiceClient.
+  // 3. Compare with selected ServiceClient in upload form.
+  // 4. Ignore Hiring Company and Role validation.
   const parseFilename = (filename, selectedClientName = '') => {
     const stem = filename.replace(/\.[^/.]+$/, '').trim();
-    const parts = stem.split('_').filter(Boolean);
+    const parts = stem.split('_').map((p) => p.trim()).filter(Boolean);
 
-    let serviceClient = selectedClientName || (parts[0] ? parts[0].replace(/([a-z])([A-Z])/g, '$1 $2').trim() : 'General Client');
+    const rawFirst = parts[0] || '';
+    const normFirst = rawFirst.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const normSelected = selectedClientName ? selectedClientName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() : '';
+
+    let serviceClient = selectedClientName || (rawFirst ? rawFirst.replace(/([a-z])([A-Z])/g, '$1 $2').trim() : 'ServiceClient');
     let company = '';
     let role = '';
-    let resumeIdentifier = '';
+    let resumeIdentifier = parts.length > 1 ? parts[parts.length - 1] : stem;
     let resumeIdTag = '';
-    let candidateName = '';
+    let candidateName = 'Candidate';
+    let status = 'valid';
+    let error = null;
+    let clientMatch = true;
 
-    // Standard 4+ segments format
-    if (parts.length >= 4) {
-      const rawCompany = parts[1];
-      const rawRoleParts = parts.slice(2, -1);
-      const rawIdentifier = parts[parts.length - 1];
+    const hasNoise = parts.some((p) => /\b(resume|cv|biodata)\b|[\(\[\{]\d+[\)\]\}]/i.test(p));
 
-      company = rawCompany.length <= 4 ? rawCompany.toUpperCase() : rawCompany.charAt(0).toUpperCase() + rawCompany.slice(1);
-      const roleRaw = rawRoleParts.join('_');
-      if (roleRaw.includes('-') || (/\d/.test(roleRaw) && /[A-Za-z]/.test(roleRaw) && roleRaw.length <= 10)) {
-        role = /^SDE[IVX\d]+$/i.test(roleRaw) ? roleRaw.replace(/^(SDE)([IVX\d]+)$/i, '$1 $2').toUpperCase() : roleRaw.toUpperCase();
-      } else {
-        role = roleRaw.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').trim();
-        role = role.charAt(0).toUpperCase() + role.slice(1);
-      }
-      resumeIdentifier = rawIdentifier;
-      resumeIdTag = rawIdentifier;
-      candidateName = cleanCandidateName(rawIdentifier);
-    } else {
-      // Natural / relaxed filenames (e.g. Suresh_resume (3).pdf, John_Doe.pdf)
-      candidateName = cleanCandidateName(parts[0] || stem);
-      resumeIdentifier = parts[parts.length - 1] || stem;
-      resumeIdTag = '';
+    if (parts.length >= 3 && !hasNoise) {
+      company = parts[1].length <= 4 ? parts[1].toUpperCase() : parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+      const roleRaw = parts.slice(2).join('_');
+      role = roleRaw.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').trim();
+      candidateName = cleanCandidateName(parts.length >= 4 ? parts[parts.length - 1] : parts[0]);
 
-      // Detect any role keywords if present
-      for (let i = 1; i < parts.length; i++) {
-        const cleanP = cleanCandidateName(parts[i]);
-        if (/(dev|engineer|lead|architect|qa|tester|sde|java|python|react|analyst)/i.test(cleanP)) {
-          role = cleanP;
-        } else if (!company && cleanP.length <= 20 && !/(resume|cv)/i.test(cleanP)) {
-          company = cleanP;
+      if (selectedClientName) {
+        if (normFirst === normSelected) {
+          serviceClient = selectedClientName;
+          status = 'valid';
+          clientMatch = true;
+          error = null;
+        } else {
+          status = 'needs_review';
+          clientMatch = false;
+          error = 'ServiceClient Mismatch';
         }
+      } else {
+        serviceClient = rawFirst;
+        status = 'valid';
+        clientMatch = true;
       }
-    }
-
-    if (selectedClientName) {
-      serviceClient = selectedClientName;
+    } else if (parts.length === 2 && !hasNoise) {
+      company = parts[1].length <= 4 ? parts[1].toUpperCase() : parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+      candidateName = cleanCandidateName(parts[0]);
+      if (selectedClientName) {
+        if (normFirst === normSelected) {
+          serviceClient = selectedClientName;
+          status = 'valid';
+          clientMatch = true;
+          error = null;
+        } else {
+          status = 'needs_review';
+          clientMatch = false;
+          error = 'ServiceClient Mismatch';
+        }
+      } else {
+        serviceClient = rawFirst;
+        status = 'valid';
+        clientMatch = true;
+      }
+    } else {
+      candidateName = cleanCandidateName(rawFirst || stem);
+      if (selectedClientName && normFirst === normSelected && !hasNoise) {
+        serviceClient = selectedClientName;
+        status = 'valid';
+        clientMatch = true;
+        error = null;
+      } else {
+        serviceClient = selectedClientName || 'ServiceClient';
+        status = 'needs_review';
+        clientMatch = false;
+        error = 'Cannot detect ServiceClient from filename';
+      }
     }
 
     return {
       service_client: serviceClient,
-      company,
-      role,
+      company: company || 'General',
+      role: role || 'General Role',
       resume_identifier: resumeIdentifier || 'RES01',
       resume_id_tag: resumeIdTag,
       candidate_name: candidateName || 'Candidate',
-      status: 'valid',
-      error: null,
-      clientMatch: true,
+      status,
+      error,
+      clientMatch,
     };
   };
 
@@ -423,23 +455,15 @@ export function UploadPage() {
 
       setQueue((prev) =>
         prev.map((it) => {
-          const normParsed = (it.service_client || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          const normSelected = selName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          const match = !selName || normParsed === normSelected;
-
-          if (it.status !== 'duplicate') {
-            if (match && it.company && it.role && it.resume_identifier) {
-              return { ...it, status: 'valid', error: null, clientMatch: true };
-            } else if (!match) {
-              return {
-                ...it,
-                status: 'needs_review',
-                error: 'Filename client does not match selected Service Client.',
-                clientMatch: false,
-              };
-            }
-          }
-          return it;
+          const parsed = parseFilename(it.filename, selName);
+          if (it.status === 'duplicate') return it;
+          return {
+            ...it,
+            service_client: parsed.service_client,
+            status: parsed.status,
+            error: parsed.error,
+            clientMatch: parsed.clientMatch,
+          };
         })
       );
 
@@ -460,14 +484,16 @@ export function UploadPage() {
           const normSelected = selName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
           const match = !selName || normParsed === normSelected;
 
-          if (match && updated.company && updated.role && updated.resume_identifier) {
-            updated.status = 'valid';
-            updated.error = null;
-            updated.clientMatch = true;
-          } else if (!match) {
-            updated.status = 'needs_review';
-            updated.error = 'Filename client does not match selected Service Client.';
-            updated.clientMatch = false;
+          if (updated.status !== 'duplicate') {
+            if (match) {
+              updated.status = 'valid';
+              updated.error = null;
+              updated.clientMatch = true;
+            } else {
+              updated.status = 'needs_review';
+              updated.error = 'ServiceClient Mismatch';
+              updated.clientMatch = false;
+            }
           }
           return updated;
         }
