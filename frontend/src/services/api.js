@@ -8,21 +8,11 @@ const DEFAULT_TTL_MS = 25000; // 25 seconds default TTL
 
 const rawAxios = axios.create({
   baseURL: `${import.meta.env.VITE_API_BASE_URL}/api`,
-  timeout: 30000,
   withCredentials: true,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
 
-// Strips Content-Type on FormData and attaches JWT tokens
+// Strips Content-Type on FormData
 rawAxios.interceptors.request.use((config) => {
-  const token = localStorage.getItem('access_token');
-  if (token) {
-    config.headers = config.headers || {};
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }

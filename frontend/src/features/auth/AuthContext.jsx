@@ -37,19 +37,13 @@ export function AuthProvider({ children }) {
   }, [checkAuth]);
 
   const login = useCallback(async (email, password) => {
-    const loginRes = await api.post('/auth/login', { email, password });
+    const credentials = { email, password };
+    await api.post('/auth/login', credentials);
 
-    const { access_token, refresh_token } = loginRes.data;
+    // Don't save a token.
+    // The backend already sets an HttpOnly access_token cookie.
 
-    localStorage.setItem('access_token', access_token);
-
-    if (refresh_token) {
-      localStorage.setItem('refresh_token', refresh_token);
-    }
-
-    api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-
-    const authUser = loginRes.data.user;
+    const authUser = null;
     setUser(authUser);
 
     // Immediately fetch pre-warmed bootstrap data in 1 fast roundtrip
