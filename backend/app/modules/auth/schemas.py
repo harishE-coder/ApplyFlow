@@ -20,7 +20,7 @@ class UserResponse(BaseModel):
     role: str
     client_id: uuid.UUID | None = None
     is_active: bool
-    created_at: datetime
+    created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

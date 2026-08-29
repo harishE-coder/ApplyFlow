@@ -4,6 +4,7 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
+from app.core.security import hash_password
 from app.modules.clients.models import Client, EmployeeClient
 from app.modules.requirements.models import Requirement
 from app.modules.users.models import User, SubAdminAssignment
@@ -170,6 +171,31 @@ async def create_client(db: AsyncSession, payload: ClientCreate, current_user: U
 
     db.add(client)
     await db.flush()
+
+    login_email = (payload.email or "").strip().lower()
+    login_password = (payload.password or "").strip()
+    if login_email and login_password:
+        existing_client_user = (await db.execute(
+            select(User).where(User.email == login_email, User.role == "client")
+        )).scalar_one_or_none()
+        if existing_client_user is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A client login account already exists for {login_email}.",
+            )
+
+        client_user = User(
+            name=(payload.contact_person or payload.company_name).strip() or payload.company_name,
+            email=login_email,
+            phone=payload.phone,
+            password_hash=hash_password(login_password),
+            role="client",
+            status="active",
+            client_id=client.id,
+            is_active=True,
+        )
+        db.add(client_user)
+        await db.flush()
 
     # Create associated Chat Room
     chat_room = ChatRoom(client_id=client.id, status="active")

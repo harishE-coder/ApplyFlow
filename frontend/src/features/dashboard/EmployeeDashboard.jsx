@@ -35,14 +35,20 @@ import { formatDate, formatRelativeTime, cn } from '@/utils/cn';
 const EmployeeCharts = lazy(() => import('./charts/EmployeeCharts'));
 
 export function EmployeeDashboard() {
-  const { user, bootstrapData } = useAuth();
+  const { user, bootstrapData, consumeBootstrapDashboard } = useAuth();
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
 
-  const initialHome = bootstrapData?.dashboard;
-  const [loading, setLoading] = useState(() => !initialHome?.dashboard && !initialHome);
-  const [data, setData] = useState(() => initialHome?.dashboard || initialHome || null);
-  const [assignedClients, setAssignedClients] = useState(() => initialHome?.assigned_clients || []);
+  const [initialData] = useState(() => {
+    if (consumeBootstrapDashboard) {
+      return consumeBootstrapDashboard();
+    }
+    return bootstrapData?.dashboard || null;
+  });
+
+  const [loading, setLoading] = useState(() => !initialData);
+  const [data, setData] = useState(() => initialData?.dashboard || (initialData?.today_uploads !== undefined ? initialData : null));
+  const [assignedClients, setAssignedClients] = useState(() => initialData?.assigned_clients || []);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [dateRange, setDateRange] = useState('today');
   const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
@@ -51,19 +57,6 @@ export function EmployeeDashboard() {
   const [attendance, setAttendance] = useState(null);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-
-  const hasConsumedBootstrapRef = useRef(Boolean(initialHome));
-
-  useEffect(() => {
-    if (bootstrapData?.dashboard && !data) {
-      const home = bootstrapData.dashboard;
-      if (home.dashboard) setData(home.dashboard);
-      else setData(home);
-      if (home.assigned_clients?.length) setAssignedClients(home.assigned_clients);
-      setLoading(false);
-      hasConsumedBootstrapRef.current = true;
-    }
-  }, [bootstrapData, data]);
 
   // Fetch employee dashboard data
   const fetchData = useCallback(async () => {
@@ -85,24 +78,40 @@ export function EmployeeDashboard() {
 
       if (results[0].status === 'fulfilled') {
         const home = results[0].value.data;
-        if (home?.dashboard) setData(home.dashboard);
-        if (home?.assigned_clients?.length) setAssignedClients(home.assigned_clients);
+        if (home?.dashboard) {
+          setData(home.dashboard);
+        } else if (home && typeof home === 'object') {
+          setData(home);
+        }
+        if (Array.isArray(home?.assigned_clients)) {
+          setAssignedClients(home.assigned_clients);
+        } else if (Array.isArray(home?.dashboard?.assigned_clients)) {
+          setAssignedClients(home.dashboard.assigned_clients);
+        }
+      } else {
+        const status = results[0].reason?.response?.status;
+        const detail = results[0].reason?.response?.data?.detail || results[0].reason?.message || 'Failed to load recruiter telemetry';
+        console.error('Recruiter Dashboard Telemetry Error:', results[0].reason);
+        if (status !== 401) {
+          toastError('Dashboard Error', detail);
+        }
       }
-      if (results[1].status === 'fulfilled') setAttendance(results[1].value.data);
+
+      if (results[1].status === 'fulfilled') {
+        setAttendance(results[1].value.data);
+      }
     } catch (err) {
-      toastError('Dashboard Error', 'Failed to load recruiter telemetry');
+      if (err.response?.status !== 401) {
+        toastError('Dashboard Error', err.response?.data?.detail || err.message || 'Failed to load recruiter telemetry');
+      }
     } finally {
       setLoading(false);
     }
   }, [selectedClientId, dateRange, customDate, toastError]);
 
   useEffect(() => {
-    if (hasConsumedBootstrapRef.current && !selectedClientId && dateRange === 'today') {
-      hasConsumedBootstrapRef.current = false;
-      return;
-    }
     fetchData();
-  }, [fetchData, selectedClientId, dateRange]);
+  }, [fetchData]);
 
   // Real-time listener with stable ref to prevent re-attaching
   const fetchDataRef = useRef(fetchData);
@@ -116,12 +125,14 @@ export function EmployeeDashboard() {
     window.addEventListener('application-created', handleRefreshEvent);
     window.addEventListener('application-updated', handleRefreshEvent);
     window.addEventListener('email-processed', handleRefreshEvent);
+    window.addEventListener('focus', handleRefreshEvent);
 
     return () => {
       window.removeEventListener('resume-uploaded', handleRefreshEvent);
       window.removeEventListener('application-created', handleRefreshEvent);
       window.removeEventListener('application-updated', handleRefreshEvent);
       window.removeEventListener('email-processed', handleRefreshEvent);
+      window.removeEventListener('focus', handleRefreshEvent);
     };
   }, []);
 

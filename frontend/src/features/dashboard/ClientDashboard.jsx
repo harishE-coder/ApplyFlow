@@ -33,12 +33,18 @@ import { cn } from '@/utils/cn';
 const ClientCharts = lazy(() => import('./charts/ClientCharts'));
 
 export function ClientDashboard() {
-  const { user, bootstrapData } = useAuth();
+  const { user, bootstrapData, consumeBootstrapDashboard } = useAuth();
   const { error: toastError } = useToast();
 
-  const initialHome = bootstrapData?.dashboard;
-  const [data, setData] = useState(() => initialHome?.dashboard || initialHome || null);
-  const [loading, setLoading] = useState(() => !initialHome?.dashboard && !initialHome);
+  const [initialData] = useState(() => {
+    if (consumeBootstrapDashboard) {
+      return consumeBootstrapDashboard();
+    }
+    return bootstrapData?.dashboard || null;
+  });
+
+  const [data, setData] = useState(() => initialData?.dashboard || (initialData && typeof initialData === 'object' ? initialData : null));
+  const [loading, setLoading] = useState(() => !initialData);
 
   // Filters State
   const [selectedHiringCompany, setSelectedHiringCompany] = useState('all');
@@ -46,18 +52,6 @@ export function ClientDashboard() {
   const [dateRange, setDateRange] = useState('today');
   const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
   const [expandedCards, setExpandedCards] = useState({});
-
-  const hasConsumedBootstrapRef = useRef(Boolean(initialHome));
-
-  useEffect(() => {
-    if (bootstrapData?.dashboard && !data) {
-      const home = bootstrapData.dashboard;
-      if (home.dashboard) setData(home.dashboard);
-      else setData(home);
-      setLoading(false);
-      hasConsumedBootstrapRef.current = true;
-    }
-  }, [bootstrapData, data]);
 
   const fetchClientDashboard = useCallback(async () => {
     setLoading(true);
@@ -83,12 +77,8 @@ export function ClientDashboard() {
   }, [dateRange, customDate, toastError]);
 
   useEffect(() => {
-    if (hasConsumedBootstrapRef.current && dateRange === 'today') {
-      hasConsumedBootstrapRef.current = false;
-      return;
-    }
     fetchClientDashboard();
-  }, [fetchClientDashboard, dateRange]);
+  }, [fetchClientDashboard]);
 
   // Real-time listener with stable ref to prevent re-attaching
   const fetchRef = useRef(fetchClientDashboard);
@@ -99,7 +89,15 @@ export function ClientDashboard() {
       fetchRef.current();
     };
     window.addEventListener('resume-uploaded', handleUploadEvent);
-    return () => window.removeEventListener('resume-uploaded', handleUploadEvent);
+    window.addEventListener('application-created', handleUploadEvent);
+    window.addEventListener('application-updated', handleUploadEvent);
+    window.addEventListener('focus', handleUploadEvent);
+    return () => {
+      window.removeEventListener('resume-uploaded', handleUploadEvent);
+      window.removeEventListener('application-created', handleUploadEvent);
+      window.removeEventListener('application-updated', handleUploadEvent);
+      window.removeEventListener('focus', handleUploadEvent);
+    };
   }, []);
 
   const toggleCard = useCallback((id) => {

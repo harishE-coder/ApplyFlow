@@ -55,7 +55,7 @@ class UserDetailResponse(BaseModel):
     client_id: uuid.UUID | None = None
     managed_by: uuid.UUID | None = None
     is_active: bool
-    created_at: datetime
+    created_at: datetime | None = None
     assigned_clients: list[AssignedClientInfo] = []
 
     model_config = {"from_attributes": True}
@@ -107,7 +107,7 @@ class SubAdminResponse(BaseModel):
     role: str = "sub_admin"
     status: str = "active"
     is_active: bool
-    created_at: datetime
+    created_at: datetime | None = None
     assigned_clients_count: int = 0
     assigned_employees_count: int = 0
     assigned_clients: list[AssignedClientInfo] = []

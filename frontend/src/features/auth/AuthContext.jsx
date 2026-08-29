@@ -70,10 +70,18 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const consumeBootstrapDashboard = useCallback(() => {
+    if (!bootstrapData?.dashboard) return null;
+    const dash = bootstrapData.dashboard;
+    setBootstrapData((prev) => (prev ? { ...prev, dashboard: null } : null));
+    return dash;
+  }, [bootstrapData]);
+
   const value = useMemo(
     () => ({
       user,
       bootstrapData,
+      consumeBootstrapDashboard,
       isLoading,
       login,
       logout,
@@ -84,7 +92,7 @@ export function AuthProvider({ children }) {
       isEmployee: user?.role === 'employee',
       isClient: user?.role === 'client',
     }),
-    [user, bootstrapData, isLoading, login, logout, checkAuth]
+    [user, bootstrapData, consumeBootstrapDashboard, isLoading, login, logout, checkAuth]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

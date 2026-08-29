@@ -10,6 +10,7 @@ class ClientBase(BaseModel):
     phone: str | None = None
     status: str = "active"  # active, inactive, archived
     logo_url: str | None = None
+    password: str | None = None
 
 
 class ClientCreate(ClientBase):

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { Search, MessageSquare, Building2, Users, Shield, Clock } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, MessageSquare, Building2, Users, Shield, Clock, Plus } from 'lucide-react';
 import { useAuth } from '@/features/auth/AuthContext';
 import { Avatar } from '@/components/ui/Avatar';
+import { Button } from '@/components/ui/Button';
 
 function formatRoomTime(dateStr) {
   if (!dateStr) return '';
@@ -28,12 +30,15 @@ export function ChatRoomList({
   onSelectRoom,
   loading = false,
 }) {
+  const navigate = useNavigate();
   const { user, isAdmin, isEmployee, isClient } = useAuth();
   const [search, setSearch] = useState('');
 
   const filteredRooms = rooms.filter((r) =>
     r.client_name.toLowerCase().includes(search.toLowerCase())
   );
+
+  const canCreateClient = isAdmin || user?.role === 'sub_admin';
 
   return (
     <div className="w-full flex flex-col h-full bg-[#081226] border-r border-[#101F3D] text-white select-none">
@@ -82,8 +87,30 @@ export function ChatRoomList({
             Loading conversation channels...
           </div>
         ) : filteredRooms.length === 0 ? (
-          <div className="py-12 text-center text-caption text-[#64748B]">
-            {search ? 'No rooms match search' : 'No chat rooms assigned'}
+          <div className="py-10 px-4 text-center text-caption text-[#CBD5E1]">
+            <div className="w-12 h-12 rounded-2xl bg-[#101F3D] border border-[#1E2E4E] flex items-center justify-center mx-auto mb-3">
+              <Building2 className="w-5 h-5 text-[#60A5FA]" />
+            </div>
+            <p className="font-semibold text-white mb-2">
+              {search ? 'No rooms match search' : 'No service client account found'}
+            </p>
+            <p className="text-[#94A3B8] mb-4">
+              {search
+                ? 'Try another conversation name.'
+                : 'Create a Service Client account first so chat rooms can be created.'}
+            </p>
+            {!search && canCreateClient && (
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                icon={Plus}
+                onClick={() => navigate('/clients')}
+                className="mx-auto"
+              >
+                Create Service Client
+              </Button>
+            )}
           </div>
         ) : (
           filteredRooms.map((room) => {

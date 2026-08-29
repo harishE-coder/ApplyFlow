@@ -48,15 +48,21 @@ function hashString(str) {
 }
 
 export function AdminDashboard() {
-  const { isAdmin, isSubAdmin, bootstrapData } = useAuth();
+  const { isAdmin, isSubAdmin, bootstrapData, consumeBootstrapDashboard } = useAuth();
   const { error: toastError } = useToast();
 
-  const initialHome = bootstrapData?.dashboard;
-  const [loading, setLoading] = useState(() => !initialHome);
+  const [initialData] = useState(() => {
+    if (consumeBootstrapDashboard) {
+      return consumeBootstrapDashboard();
+    }
+    return bootstrapData?.dashboard || null;
+  });
+
+  const [loading, setLoading] = useState(() => !initialData);
 
   // 1. Reactive Top Filters
-  const [clients, setClients] = useState(() => initialHome?.clients || []);
-  const [allEmployees, setAllEmployees] = useState(() => initialHome?.all_employees || []);
+  const [clients, setClients] = useState(() => initialData?.clients || []);
+  const [allEmployees, setAllEmployees] = useState(() => initialData?.all_employees || []);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Single Date Picker
@@ -66,30 +72,11 @@ export function AdminDashboard() {
   const [sortOption, setSortOption] = useState('highest'); // 'highest' | 'lowest' | 'remaining'
 
   // Data States
-  const [overview, setOverview] = useState(() => initialHome?.overview || null);
-  const [clientCards, setClientCards] = useState(() => initialHome?.client_cards || []);
-  const [teamPerformance, setTeamPerformance] = useState(() => initialHome?.team_performance || []);
-  const [allTargets, setAllTargets] = useState(() => initialHome?.all_targets || []);
-  const [attendanceSummary, setAttendanceSummary] = useState(() => initialHome?.attendance_summary || null);
-
-  // Track bootstrap data initial consumption to skip duplicate cold fetch
-  const hasConsumedBootstrapRef = useRef(Boolean(initialHome));
-
-  // Sync if bootstrapData arrives asynchronously
-  useEffect(() => {
-    if (bootstrapData?.dashboard && !overview) {
-      const home = bootstrapData.dashboard;
-      if (home.overview) setOverview(home.overview);
-      if (home.team_performance) setTeamPerformance(home.team_performance);
-      if (home.attendance_summary) setAttendanceSummary(home.attendance_summary);
-      if (home.client_cards) setClientCards(home.client_cards);
-      if (home.clients?.length) setClients(home.clients);
-      if (home.all_employees?.length) setAllEmployees(home.all_employees);
-      if (home.all_targets?.length) setAllTargets(home.all_targets);
-      setLoading(false);
-      hasConsumedBootstrapRef.current = true;
-    }
-  }, [bootstrapData, overview]);
+  const [overview, setOverview] = useState(() => initialData?.overview || null);
+  const [clientCards, setClientCards] = useState(() => initialData?.client_cards || []);
+  const [teamPerformance, setTeamPerformance] = useState(() => initialData?.team_performance || []);
+  const [allTargets, setAllTargets] = useState(() => initialData?.all_targets || []);
+  const [attendanceSummary, setAttendanceSummary] = useState(() => initialData?.attendance_summary || null);
 
   // Cascading Employee list based on selected client
   const availableEmployees = useMemo(() => {
@@ -174,13 +161,8 @@ export function AdminDashboard() {
   }, [selectedClientId, selectedEmployeeId, quickDateFilter, selectedDate, toastError]);
 
   useEffect(() => {
-    // Skip duplicate network request on initial mount if bootstrap data was already consumed
-    if (hasConsumedBootstrapRef.current && !selectedClientId && !selectedEmployeeId && quickDateFilter === 'today') {
-      hasConsumedBootstrapRef.current = false;
-      return;
-    }
     fetchData();
-  }, [fetchData, selectedClientId, selectedEmployeeId, quickDateFilter]);
+  }, [fetchData]);
 
   // Real-time listener for resume uploads with stable ref to prevent re-attaching
   const fetchDataRef = useRef(fetchData);
@@ -191,7 +173,15 @@ export function AdminDashboard() {
       fetchDataRef.current();
     };
     window.addEventListener('resume-uploaded', handleUploadEvent);
-    return () => window.removeEventListener('resume-uploaded', handleUploadEvent);
+    window.addEventListener('application-created', handleUploadEvent);
+    window.addEventListener('application-updated', handleUploadEvent);
+    window.addEventListener('focus', handleUploadEvent);
+    return () => {
+      window.removeEventListener('resume-uploaded', handleUploadEvent);
+      window.removeEventListener('application-created', handleUploadEvent);
+      window.removeEventListener('application-updated', handleUploadEvent);
+      window.removeEventListener('focus', handleUploadEvent);
+    };
   }, []);
 
   // Selected Client Entity

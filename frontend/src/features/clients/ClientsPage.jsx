@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Building2,
@@ -161,6 +162,7 @@ const ClientCard = React.memo(function ClientCard({
 });
 
 export function ClientsPage() {
+  const navigate = useNavigate();
   const { user, isAdmin, isSubAdmin, isEmployee } = useAuth();
   const { success, error: toastError, info } = useToast();
 
@@ -174,6 +176,7 @@ export function ClientsPage() {
   const [newContact, setNewContact] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [creating, setCreating] = useState(false);
 
   // Edit Client Modal State
@@ -240,6 +243,7 @@ export function ClientsPage() {
         contact_person: newContact,
         email: newEmail,
         phone: newPhone,
+        password: newPassword,
       });
       success('Client Created', `${newCompany} successfully added.`);
       setIsCreateOpen(false);
@@ -247,6 +251,7 @@ export function ClientsPage() {
       setNewContact('');
       setNewEmail('');
       setNewPhone('');
+      setNewPassword('');
       fetchClients();
     } catch (err) {
       toastError('Creation Failed', err.response?.data?.detail || 'Failed to create client');
@@ -487,19 +492,42 @@ export function ClientsPage() {
         ))}
       </div>
 
-      {/* Client Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {clients.map((client) => {
-          const menuItems = getActionMenuItems(client);
-          return (
-            <ClientCard
-              key={client.id}
-              client={client}
-              menuItems={menuItems}
-            />
-          );
-        })}
-      </div>
+      {clients.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] p-12 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-[#E0F2FE] border border-[#BAE6FD] flex items-center justify-center mx-auto mb-4">
+            <Building2 className="w-7 h-7 text-[#0284C7]" />
+          </div>
+          <h3 className="text-h3 font-extrabold text-[#081226]">No Service Client account yet</h3>
+          <p className="text-small text-[#64748B] mt-2 max-w-md mx-auto">
+            Create your first Service Client account to start chat, resume, and recruitment workflows.
+          </p>
+          {(isAdmin || isSubAdmin) && (
+            <Button
+              type="button"
+              variant="primary"
+              size="md"
+              icon={Plus}
+              onClick={() => setIsCreateOpen(true)}
+              className="mt-6"
+            >
+              Create Service Client Account
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {clients.map((client) => {
+            const menuItems = getActionMenuItems(client);
+            return (
+              <ClientCard
+                key={client.id}
+                client={client}
+                menuItems={menuItems}
+              />
+            );
+          })}
+        </div>
+      )}
 
       {/* Add Client Modal */}
       <Modal
@@ -534,6 +562,14 @@ export function ClientsPage() {
             placeholder="+1-555-0199"
             value={newPhone}
             onChange={(e) => setNewPhone(e.target.value)}
+          />
+          <Input
+            label="Client Login Password"
+            type="password"
+            placeholder="Set password for client login"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            required
           />
 
           <div className="pt-4 flex justify-end gap-3">
