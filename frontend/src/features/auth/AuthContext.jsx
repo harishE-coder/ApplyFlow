@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '@/services/api';
 
 const AuthContext = createContext(null);
@@ -7,8 +7,11 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [bootstrapData, setBootstrapData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const isLoggingOutRef = useRef(false);
 
   const checkAuth = useCallback(async () => {
+    if (isLoggingOutRef.current) return;
+
     try {
       const response = await api.get('/auth/bootstrap', { cache: false });
       if (response.data) {
@@ -54,15 +57,22 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(async () => {
+    isLoggingOutRef.current = true;
+    api.invalidateCache();
+    setUser(null);
+    setBootstrapData(null);
+
+    document.cookie = 'access_token=; Max-Age=0; path=/; SameSite=None; Secure';
+    document.cookie = 'refresh_token=; Max-Age=0; path=/; SameSite=None; Secure';
+
+    window.location.replace('/login');
+
     try {
       await api.post('/auth/logout');
     } catch (err) {
       console.error('Logout error:', err);
     } finally {
-      api.invalidateCache();
-      setUser(null);
-      setBootstrapData(null);
-      window.location.replace('/login');
+      isLoggingOutRef.current = false;
     }
   }, []);
 
