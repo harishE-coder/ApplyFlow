@@ -10,7 +10,7 @@ export function AuthProvider({ children }) {
 
   const checkAuth = useCallback(async () => {
     try {
-      const response = await api.get('/auth/bootstrap');
+      const response = await api.get('/auth/bootstrap', { cache: false });
       if (response.data) {
         setUser(response.data.user || null);
         setBootstrapData({
@@ -41,7 +41,7 @@ export function AuthProvider({ children }) {
     await api.post('/auth/login', credentials);
 
     // Immediately fetch the authenticated bootstrap payload after login.
-    const bootRes = await api.get('/auth/bootstrap');
+    const bootRes = await api.get('/auth/bootstrap', { cache: false });
 
     setUser(bootRes.data.user);
     setBootstrapData({
@@ -59,9 +59,10 @@ export function AuthProvider({ children }) {
     } catch (err) {
       console.error('Logout error:', err);
     } finally {
+      api.invalidateCache();
       setUser(null);
       setBootstrapData(null);
-      window.location.href = '/login';
+      window.location.replace('/login');
     }
   }, []);
 
