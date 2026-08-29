@@ -39,12 +39,15 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (email, password) => {
     const loginRes = await api.post('/auth/login', { email, password });
 
-    if (loginRes.data?.access_token) {
-      localStorage.setItem('access_token', loginRes.data.access_token);
+    const { access_token, refresh_token } = loginRes.data;
+
+    localStorage.setItem('access_token', access_token);
+
+    if (refresh_token) {
+      localStorage.setItem('refresh_token', refresh_token);
     }
-    if (loginRes.data?.refresh_token) {
-      localStorage.setItem('refresh_token', loginRes.data.refresh_token);
-    }
+
+    api.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
 
     const authUser = loginRes.data.user;
     setUser(authUser);
