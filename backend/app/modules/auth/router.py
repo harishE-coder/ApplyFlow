@@ -126,7 +126,7 @@ async def refresh_token(
 async def logout(response: Response):
     """Clear auth cookies."""
     response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/api/auth")
+    response.delete_cookie("refresh_token", path="/")
     return {"message": "Logged out"}
 
 
