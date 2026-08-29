@@ -40,27 +40,17 @@ export function AuthProvider({ children }) {
     const credentials = { email, password };
     await api.post('/auth/login', credentials);
 
-    // Don't save a token.
-    // The backend already sets an HttpOnly access_token cookie.
+    // Immediately fetch the authenticated bootstrap payload after login.
+    const bootRes = await api.get('/auth/bootstrap');
 
-    const authUser = null;
-    setUser(authUser);
+    setUser(bootRes.data.user);
+    setBootstrapData({
+      dashboard: bootRes.data.dashboard || null,
+      notifications: bootRes.data.notifications || null,
+      chat_unread: bootRes.data.chat_unread || null,
+    });
 
-    // Immediately fetch pre-warmed bootstrap data in 1 fast roundtrip
-    try {
-      const bootRes = await api.get('/auth/bootstrap');
-      if (bootRes.data) {
-        setBootstrapData({
-          dashboard: bootRes.data.dashboard || null,
-          notifications: bootRes.data.notifications || null,
-          chat_unread: bootRes.data.chat_unread || null,
-        });
-      }
-    } catch (err) {
-      // Fallback
-    }
-
-    return authUser;
+    return bootRes.data.user;
   }, []);
 
   const logout = useCallback(async () => {

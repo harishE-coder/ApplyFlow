@@ -32,7 +32,7 @@ rawAxios.interceptors.response.use(
     ) {
       originalRequest._retry = true;
       try {
-        await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        await rawAxios.post('/auth/refresh', {});
         return rawAxios(originalRequest);
       } catch (refreshError) {
         if (window.location.pathname !== '/login') {
