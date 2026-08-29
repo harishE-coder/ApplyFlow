@@ -24,23 +24,25 @@ rawAxios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+
     if (
       error.response?.status === 401 &&
       !originalRequest._retry &&
       !originalRequest.url?.includes('/auth/login') &&
-      !originalRequest.url?.includes('/auth/refresh')
+      !originalRequest.url?.includes('/auth/refresh') &&
+      !originalRequest.url?.includes('/auth/bootstrap')
     ) {
       originalRequest._retry = true;
+
       try {
-        await rawAxios.post('/auth/refresh', {});
+        await rawAxios.post('/auth/refresh');
         return rawAxios(originalRequest);
-      } catch (refreshError) {
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
-        }
-        return Promise.reject(refreshError);
+      } catch {
+        window.location.href = '/login';
+        return Promise.reject(error);
       }
     }
+
     return Promise.reject(error);
   }
 );
