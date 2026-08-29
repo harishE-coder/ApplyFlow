@@ -15,8 +15,14 @@ const rawAxios = axios.create({
   },
 });
 
-// Strips Content-Type on FormData
+// Strips Content-Type on FormData and attaches JWT tokens
 rawAxios.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+
   if (config.data instanceof FormData) {
     delete config.headers['Content-Type'];
   }
