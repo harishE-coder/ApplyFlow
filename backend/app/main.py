@@ -260,6 +260,7 @@ origins = [
     for origin in os.getenv("APP_CORS_ORIGINS", "").split(",")
     if origin.strip()
 ]
+print("CORS Origins Loaded:", origins)
 
 app.add_middleware(
     CORSMiddleware,
