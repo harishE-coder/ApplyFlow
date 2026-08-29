@@ -3,6 +3,7 @@ Apply Flow Careers — FastAPI application entry point.
 Registers all routers, middleware, and imports models for Alembic.
 """
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -254,9 +255,14 @@ app = FastAPI(
 app.add_middleware(ProfilerMiddleware)
 
 # ---- CORS ----
+origins = os.getenv(
+    "APP_CORS_ORIGINS",
+    f"{settings.frontend_url},http://localhost:5173,http://127.0.0.1:5173",
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[o.strip() for o in origins if o.strip()],
     allow_credentials=True,  # Required for HTTP-only cookies
     allow_methods=["*"],
     allow_headers=["*"],
