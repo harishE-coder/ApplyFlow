@@ -25,19 +25,19 @@ def _set_auth_cookies(response: Response, user) -> None:
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,  # Set True in production with HTTPS
-        samesite="lax",
-        max_age=settings.access_token_expire_minutes * 60,
+        secure=True,
+        samesite="none",
         path="/",
+        max_age=settings.access_token_expire_minutes * 60,
     )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=True,
+        samesite="none",
+        path="/",
         max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
-        path="/api/auth",  # Only sent to auth endpoints
     )
 
 
