@@ -233,6 +233,19 @@ async def get_messages(
     is_recipient_online = any(uid != str(user.id) for uid in manager.get_online_users(room_id_str)) or any(
         manager.is_user_online(r.user_id) for r in other_reads
     )
+    if not is_recipient_online:
+        room_obj = (await db.execute(select(ChatRoom).where(ChatRoom.id == room_id))).scalar_one_or_none()
+        if room_obj and room_obj.client_id:
+            assigned = (await db.execute(
+                select(EmployeeClient.employee_id).where(EmployeeClient.client_id == room_obj.client_id)
+            )).scalars().all()
+            client_users = (await db.execute(
+                select(User.id).where(User.client_id == room_obj.client_id, User.is_active == True)
+            )).scalars().all()
+            for uid in list(assigned) + list(client_users):
+                if uid != user.id and manager.is_user_online(uid):
+                    is_recipient_online = True
+                    break
 
     items = []
     for msg in reversed(messages):
