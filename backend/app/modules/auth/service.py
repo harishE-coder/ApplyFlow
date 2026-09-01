@@ -21,7 +21,7 @@ async def authenticate_user(
     """
     from sqlalchemy import func
     result = await db.execute(
-        select(User).where(func.lower(User.email) == email.strip().lower(), User.is_active == True)  # noqa: E712
+        select(User).where(func.lower(User.email) == email.strip().lower(), User.is_active == True)
     )
     user = result.scalar_one_or_none()
 

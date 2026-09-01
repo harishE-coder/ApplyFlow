@@ -7,6 +7,7 @@ Comprehensive Automated Test Suite:
 import asyncio
 import sys
 import uuid
+
 import httpx
 
 BASE_URL = "http://localhost:8000"
@@ -50,11 +51,11 @@ async def run_suite():
     print("🔐 Authenticating Test Personas...", flush=True)
     res = await admin_client.post("/api/auth/login", json={"email": "admin@applyflow.com", "password": "admin123"})
     assert res.status_code == 200, f"Admin login failed: {res.text}"
-    admin_user = res.json()["user"]
+    _admin_user = res.json()["user"]
 
     res = await subadmin_client.post("/api/auth/login", json={"email": "punith@applyflow.com", "password": "punith123"})
     assert res.status_code == 200, f"Sub-Admin login failed: {res.text}"
-    subadmin_user = res.json()["user"]
+    _subadmin_user = res.json()["user"]
 
     res = await employee_client.post("/api/auth/login", json={"email": "harish@applyflow.com", "password": "harish123"})
     assert res.status_code == 200, f"Employee login failed: {res.text}"

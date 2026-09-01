@@ -4,13 +4,12 @@ Extracts clean text from Copy/Paste, .eml (RFC 822), .txt, .pdf files, and Scree
 Ensures zero binary data is sent to Groq AI.
 """
 
+import html
 import io
 import re
-import html
-import email
 from email import policy
 from email.parser import BytesParser
-from typing import Tuple
+
 from fastapi import HTTPException, UploadFile
 from PIL import Image
 
@@ -62,7 +61,7 @@ def extract_from_eml(eml_bytes: bytes) -> str:
     except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to parse .eml file: {str(e)}",
+            detail=f"Failed to parse .eml file: {e!s}",
         )
 
 
@@ -90,7 +89,7 @@ def extract_from_pdf(pdf_bytes: bytes) -> str:
     except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to read PDF document: {str(e)}",
+            detail=f"Failed to read PDF document: {e!s}",
         )
 
 
@@ -102,7 +101,7 @@ def extract_from_txt(txt_bytes: bytes) -> str:
         try:
             return txt_bytes.decode("latin-1").strip()
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to decode text file: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Failed to decode text file: {e!s}")
 
 
 def extract_from_image(image_bytes: bytes) -> str:
@@ -125,11 +124,11 @@ def extract_from_image(image_bytes: bytes) -> str:
     except Exception as e:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to process screenshot image: {str(e)}",
+            detail=f"Failed to process screenshot image: {e!s}",
         )
 
 
-async def extract_text_from_upload(file: UploadFile) -> Tuple[str, str, str]:
+async def extract_text_from_upload(file: UploadFile) -> tuple[str, str, str]:
     """
     Dispatcher to extract clean text from .eml, .txt, .pdf, or screenshot image files.
     Returns tuple of (extracted_text, filename, source_type).

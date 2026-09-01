@@ -19,12 +19,18 @@ pydantic>=2.9.0
 pydantic-settings>=2.5.0
 email-validator>=2.0.0
 
-# AI & LLM (Groq LLaMA 3.3)
+# AI, ML & LLM
 groq>=0.11.0
+scikit-learn>=1.5.0
+joblib>=1.4.0
 
 # HTTP & External Services
 httpx>=0.27.0
 requests>=2.32.0
+supabase>=2.7.0
+pywebpush>=2.5.0
+py-vapid>=1.9.4
+http-ece>=1.2.1
 
 # Google Drive & Cloud Services
 google-api-python-client>=2.149.0

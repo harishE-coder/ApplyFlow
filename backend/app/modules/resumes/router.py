@@ -1,22 +1,33 @@
 import io
 import uuid
 from datetime import date
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, BackgroundTasks
-from fastapi.responses import Response as FastAPIResponse, StreamingResponse
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+)
+from fastapi.responses import Response as FastAPIResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
-from app.modules.users.models import User
+from app.modules.resumes import service
 from app.modules.resumes.schemas import (
-    ResumeResponse,
-    ResumeUpdate,
     BulkUploadResponse,
-    ConfirmManualUploadRequest,
     CheckDuplicatesRequest,
     CheckDuplicatesResponse,
+    ConfirmManualUploadRequest,
+    ResumeResponse,
+    ResumeUpdate,
 )
-from app.modules.resumes import service
+from app.modules.users.models import User
 from app.services.google_drive import drive_service
 
 router = APIRouter(prefix="/api/resumes", tags=["resumes"])

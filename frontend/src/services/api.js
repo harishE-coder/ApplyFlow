@@ -29,6 +29,7 @@ rawAxios.interceptors.response.use(
       error.response?.status === 401 &&
       !originalRequest._retry &&
       !originalRequest.url?.includes('/auth/login') &&
+      !originalRequest.url?.includes('/auth/logout') &&
       !originalRequest.url?.includes('/auth/refresh') &&
       !originalRequest.url?.includes('/auth/bootstrap')
     ) {
@@ -38,6 +39,7 @@ rawAxios.interceptors.response.use(
         await rawAxios.post('/auth/refresh');
         return rawAxios(originalRequest);
       } catch {
+        sessionStorage.setItem('applyflow_logged_out', 'true');
         window.location.href = '/login';
         return Promise.reject(error);
       }

@@ -4,8 +4,8 @@ Chat Pydantic schemas for request/response validation.
 
 import uuid
 from datetime import datetime
-from pydantic import BaseModel
 
+from pydantic import BaseModel
 
 # ---- Response Schemas ----
 
@@ -29,9 +29,9 @@ class ChatRoomResponse(BaseModel):
 
 
 class MessageSender(BaseModel):
-    id: uuid.UUID
-    name: str
-    role: str
+    id: uuid.UUID | None = None
+    name: str = "Deleted User"
+    role: str = "user"
 
 
 class ChatMessageResponse(BaseModel):
@@ -42,6 +42,8 @@ class ChatMessageResponse(BaseModel):
     attachment_type: str | None = None  # "resume", "pdf", "image", etc.
     attachment_reference: str | None = None  # Resume ID, drive file ID, or download URL
     attachment_filename: str | None = None
+    client_id: str | None = None
+    status: str = "sent"  # "pending", "sent", "delivered", "read"
     created_at: datetime
     edited_at: datetime | None = None
     is_deleted: bool = False
@@ -79,6 +81,7 @@ class ShareableResumeItem(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str
+    client_id: str | None = None
     attachment_type: str | None = None
     attachment_reference: str | None = None
     attachment_filename: str | None = None
@@ -90,3 +93,40 @@ class ShareResumeRequest(BaseModel):
 
 class MarkReadRequest(BaseModel):
     message_id: uuid.UUID | None = None
+
+
+# ---- Push & Preference Schemas ----
+
+class PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionCreate(BaseModel):
+    endpoint: str
+    keys: PushKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str
+
+
+class VapidPublicKeyResponse(BaseModel):
+    public_key: str | None = None
+
+
+class NotificationPreferencesResponse(BaseModel):
+    chat_push: bool = True
+    email_notifications: bool = True
+    sound: bool = True
+    muted_rooms: list[str] = []
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationPreferencesUpdate(BaseModel):
+    chat_push: bool | None = None
+    email_notifications: bool | None = None
+    sound: bool | None = None
+    muted_rooms: list[str] | None = None
+

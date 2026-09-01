@@ -10,18 +10,17 @@ Verifies:
 
 import asyncio
 import time
-from sqlalchemy import select
+
 from app.core.database import async_session_factory
-from app.modules.users.models import User
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.applications.models import Application
 from app.modules.applications.schemas import ConfirmSaveRequest
 from app.modules.applications.service import (
-    get_ai_inbox_feed,
     analyze_recruiter_email,
     confirm_and_save_email,
-    get_application_timeline,
+    get_ai_inbox_feed,
 )
+from app.modules.clients.models import Client, EmployeeClient
+from app.modules.users.models import User
+from sqlalchemy import select
 
 
 async def run_permission_tests():

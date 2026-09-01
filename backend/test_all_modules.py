@@ -6,8 +6,9 @@ verifies business logic constraints, and outputs detailed pass/fail diagnostics.
 
 import sys
 import uuid
+from datetime import date
+
 import requests
-from datetime import date, datetime
 
 BASE_URL = "http://localhost:8000"
 
@@ -145,7 +146,7 @@ def run_all_tests():
     }
     res = admin_session.post(f"{BASE_URL}/api/users", json=new_recruiter_payload)
     runner.assert_status(res, [200, 201], "Admin Create New Recruiter")
-    new_emp_id = res.json().get("id")
+    _new_emp_id = res.json().get("id")
 
     # -------------------------------------------------------------
     # 4. REQUIREMENTS MODULE TESTS

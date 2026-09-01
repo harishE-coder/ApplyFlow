@@ -1,20 +1,29 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import select, delete, func
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from fastapi import HTTPException, status
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.requirements.models import Requirement
-from app.modules.users.models import User, SubAdminAssignment
-from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
-from app.modules.targets.models import Target
-from app.modules.chat.models import ChatRoom, ChatMessage
 from app.modules.activity_logs.models import ActivityLog
-from app.modules.clients.schemas import ClientCreate, ClientUpdate, ClientResponse, AssignedEmployeeInfo
-from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
+from app.modules.applications.models import Application
+from app.modules.chat.models import ChatMessage, ChatRoom
+from app.modules.clients.models import Client, EmployeeClient
+from app.modules.clients.schemas import (
+    AssignedEmployeeInfo,
+    ClientCreate,
+    ClientResponse,
+    ClientUpdate,
+)
+from app.modules.requirements.models import Requirement
+from app.modules.resumes.models import Resume
+from app.modules.targets.models import Target
+from app.modules.users.models import SubAdminAssignment, User
+from app.modules.users.service import (
+    get_sub_admin_client_ids,
+    get_sub_admin_employee_ids,
+)
 
 
 async def get_clients(
@@ -38,7 +47,7 @@ async def get_clients(
             select(EmployeeClient.client_id)
             .where(
                 EmployeeClient.employee_id == current_user.id,
-                EmployeeClient.active == True,  # noqa: E712
+                EmployeeClient.active == True,
             )
         )
         emp_cids = (await db.execute(subquery)).scalars().all()
@@ -64,7 +73,7 @@ async def get_clients(
     emp_query = (
         select(EmployeeClient.client_id, User.id, User.name, User.email, EmployeeClient.is_primary, EmployeeClient.active, EmployeeClient.assigned_at)
         .join(User, EmployeeClient.employee_id == User.id)
-        .where(EmployeeClient.client_id.in_(client_ids), User.is_active == True)  # noqa: E712
+        .where(EmployeeClient.client_id.in_(client_ids), User.is_active == True)
         .order_by(EmployeeClient.is_primary.desc(), User.name)
     )
     emp_res = await db.execute(emp_query)
@@ -374,6 +383,7 @@ async def safe_delete_client(
         raise HTTPException(status_code=404, detail="Client not found")
 
     # Check dependencies
+    req_count = (await db.execute(select(func.count(Requirement.id)).where(Requirement.client_id == client_id))).scalar() or 0
     res_count = (await db.execute(select(func.count(Resume.id)).where(Resume.client_id == client_id))).scalar() or 0
     app_count = (await db.execute(select(func.count(Application.id)).where(Application.client_id == client_id))).scalar() or 0
     target_count = (await db.execute(select(func.count(Target.id)).where(Target.client_id == client_id))).scalar() or 0
@@ -383,13 +393,25 @@ async def safe_delete_client(
     if room:
         chat_count = (await db.execute(select(func.count(ChatMessage.id)).where(ChatMessage.room_id == room.id))).scalar() or 0
 
-    if res_count > 0 or app_count > 0 or target_count > 0 or chat_count > 0:
+    reasons = []
+    if req_count > 0:
+        reasons.append(f"{req_count} job opening(s)")
+    if app_count > 0:
+        reasons.append(f"{app_count} candidate application(s)")
+    if res_count > 0:
+        reasons.append(f"{res_count} resume(s)")
+    if chat_count > 0:
+        reasons.append(f"{chat_count} chat message(s)")
+    if target_count > 0:
+        reasons.append(f"{target_count} target quota(s)")
+
+    if reasons:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This client has historical data. Archive instead.",
+            detail=f"Client '{client.company_name}' cannot be deleted because {', '.join(reasons)} are linked. Archive the client or remove linked requirements first.",
         )
 
-    # Safe to delete
+    # Safe to delete - cascade will clean up owned chat rooms, assignments, and employee mappings
     if room:
         await db.delete(room)
 

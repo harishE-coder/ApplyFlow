@@ -1,16 +1,18 @@
 import uuid
 from datetime import date, datetime, timezone
-from sqlalchemy import select, func, and_
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
-
-from app.modules.users.models import User
-from app.modules.attendance.models import Attendance
-from app.modules.attendance.schemas import AttendanceRecordResponse, AdminAttendanceSummary
-from app.modules.activity_logs.models import ActivityLog
-
 
 from app.core.cache import invalidate_dashboard_cache
+from app.modules.activity_logs.models import ActivityLog
+from app.modules.attendance.models import Attendance
+from app.modules.attendance.schemas import (
+    AdminAttendanceSummary,
+    AttendanceRecordResponse,
+)
+from app.modules.users.models import User
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 def _format_duration(start: datetime, end: datetime) -> str:
     if start.tzinfo is not None and end.tzinfo is None:
@@ -19,8 +21,7 @@ def _format_duration(start: datetime, end: datetime) -> str:
         end = end.replace(tzinfo=None)
     diff = end - start
     total_seconds = int(diff.total_seconds())
-    if total_seconds < 0:
-        total_seconds = 0
+    total_seconds = max(total_seconds, 0)
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
     return f"{hours}h {minutes}m"
@@ -116,13 +117,20 @@ async def check_out(db: AsyncSession, user: User) -> AttendanceRecordResponse:
     )
 
 
-async def get_admin_attendance_summary(db: AsyncSession) -> AdminAttendanceSummary:
+async def get_admin_attendance_summary(
+    db: AsyncSession,
+    allowed_employee_ids: list[uuid.UUID] | None = None,
+) -> AdminAttendanceSummary:
     today = date.today()
-    result = await db.execute(
+    query = (
         select(Attendance, User.name)
         .join(User, Attendance.employee_id == User.id)
         .where(Attendance.work_date == today)
     )
+    if allowed_employee_ids is not None:
+        query = query.where(Attendance.employee_id.in_(allowed_employee_ids))
+
+    result = await db.execute(query)
     rows = result.all()
 
     present_ids = set()

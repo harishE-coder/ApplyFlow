@@ -85,18 +85,27 @@ export function ClientDashboard() {
   fetchRef.current = fetchClientDashboard;
 
   useEffect(() => {
+    let focusTimeout = null;
     const handleUploadEvent = () => {
       fetchRef.current();
     };
+    const handleFocusEvent = () => {
+      if (focusTimeout) clearTimeout(focusTimeout);
+      focusTimeout = setTimeout(() => {
+        fetchRef.current();
+      }, 500);
+    };
+
     window.addEventListener('resume-uploaded', handleUploadEvent);
     window.addEventListener('application-created', handleUploadEvent);
     window.addEventListener('application-updated', handleUploadEvent);
-    window.addEventListener('focus', handleUploadEvent);
+    window.addEventListener('focus', handleFocusEvent);
     return () => {
+      if (focusTimeout) clearTimeout(focusTimeout);
       window.removeEventListener('resume-uploaded', handleUploadEvent);
       window.removeEventListener('application-created', handleUploadEvent);
       window.removeEventListener('application-updated', handleUploadEvent);
-      window.removeEventListener('focus', handleUploadEvent);
+      window.removeEventListener('focus', handleFocusEvent);
     };
   }, []);
 
@@ -121,21 +130,14 @@ export function ClientDashboard() {
   }, [data, selectedHiringCompany, searchQuery]);
 
   const progressData = useMemo(() => {
-    if (!data?.application_progress) {
-      return [
-        { stage: 'Applied', count: 179, color: '#2563EB' },
-        { stage: 'Interview', count: 24, color: '#F97316' },
-        { stage: 'Offer', count: 6, color: '#10B981' },
-        { stage: 'Joined', count: 2, color: '#9333EA' },
-      ];
-    }
+    const stages = data?.application_progress || [];
     const colors = ['#2563EB', '#F97316', '#10B981', '#9333EA'];
-    return data.application_progress.map((item, idx) => ({
+    return stages.map((item, idx) => ({
       stage: item.stage,
-      count: item.count,
+      count: item.count || 0,
       color: colors[idx % colors.length],
     }));
-  }, [data]);
+  }, [data?.application_progress]);
 
   const getRoundBadgeColor = (roundStr = '') => {
     const r = roundStr.toLowerCase();
@@ -207,7 +209,7 @@ export function ClientDashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <KPICard
           title="Applied"
-          value={data?.applied_count ?? 179}
+          value={data?.applied_count ?? 0}
           subtitle="All resumes uploaded"
           icon={FileText}
           variant="blue"
@@ -215,7 +217,7 @@ export function ClientDashboard() {
 
         <KPICard
           title="Today's Uploads"
-          value={data?.today_uploads ?? 12}
+          value={data?.today_uploads ?? 0}
           subtitle="Uploaded today"
           icon={Clock}
           variant="default"
@@ -223,7 +225,7 @@ export function ClientDashboard() {
 
         <KPICard
           title="Interview Updates"
-          value={data?.interview_updates ?? 24}
+          value={data?.interview_updates ?? 0}
           subtitle="Interview emails received"
           icon={TrendingUp}
           variant="orange"
@@ -231,7 +233,7 @@ export function ClientDashboard() {
 
         <KPICard
           title="Offers"
-          value={data?.offers_count ?? 6}
+          value={data?.offers_count ?? 0}
           subtitle="Offer emails received"
           icon={Award}
           variant="success"
@@ -381,32 +383,34 @@ export function ClientDashboard() {
                         </p>
 
                         <div className="relative pl-6 space-y-4 before:content-[''] before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-[#E2E8F0]">
-                          {(item.events && item.events.length > 0 ? item.events : [
-                            { stage: 'Application Submitted', round: 'Submitted', date: '23 Aug' },
-                            { stage: 'Round 1 Cleared', round: 'Round 1', date: '24 Aug' },
-                            { stage: 'Round 2 Scheduled', round: item.round, date: '25 Aug' },
-                          ]).map((ev, eIdx) => {
-                            const isLatest = eIdx === (item.events?.length ? item.events.length - 1 : 2);
+                          {(!item.events || item.events.length === 0) ? (
+                            <p className="text-caption text-[#94A3B8] italic py-1">
+                              No milestone progression events logged yet for this candidate.
+                            </p>
+                          ) : (
+                            item.events.map((ev, eIdx) => {
+                              const isLatest = eIdx === item.events.length - 1;
 
-                            return (
-                              <div key={eIdx} className="relative space-y-1">
-                                <div
-                                  className={cn(
-                                    'absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white',
-                                    isLatest
-                                      ? 'bg-[#2563EB] ring-2 ring-[#2563EB]/20'
-                                      : 'bg-[#10B981] ring-2 ring-[#10B981]/20'
-                                  )}
-                                />
-                                <div className="flex items-center gap-2">
-                                  <p className="text-small font-extrabold text-[#081226]">
-                                    {isLatest ? `● ${ev.stage || ev.round}` : `✓ ${ev.stage || ev.round}`}
-                                  </p>
-                                  <span className="text-[11px] text-[#64748B] font-medium">({ev.date})</span>
+                              return (
+                                <div key={eIdx} className="relative space-y-1">
+                                  <div
+                                    className={cn(
+                                      'absolute -left-6 top-1 w-4 h-4 rounded-full border-2 border-white',
+                                      isLatest
+                                        ? 'bg-[#2563EB] ring-2 ring-[#2563EB]/20'
+                                        : 'bg-[#10B981] ring-2 ring-[#10B981]/20'
+                                    )}
+                                  />
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-small font-extrabold text-[#081226]">
+                                      {isLatest ? `● ${ev.stage || ev.round}` : `✓ ${ev.stage || ev.round}`}
+                                    </p>
+                                    <span className="text-[11px] text-[#64748B] font-medium">({ev.date})</span>
+                                  </div>
                                 </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            })
+                          )}
                         </div>
                       </motion.div>
                     )}

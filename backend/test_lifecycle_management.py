@@ -5,32 +5,24 @@ Comprehensive Test Suite for ApplyFlow Lifecycle Management
 
 import asyncio
 import uuid
-from datetime import datetime, timezone, date
-from sqlalchemy import select
 
 from app.core.database import async_session_factory
-from app.modules.users.models import User
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.requirements.models import Requirement
-from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
-from app.modules.targets.models import Target
-from app.modules.chat.models import ChatRoom, ChatMessage
-from app.modules.notifications.models import Notification
-
-from app.modules.clients import service as client_service
-from app.modules.clients.schemas import ClientCreate, ClientUpdate
-from app.modules.users import service as user_service
-from app.modules.users.schemas import UserCreate, UserUpdate, ResetPasswordRequest
-from app.modules.requirements import service as req_service
-from app.modules.requirements.schemas import RequirementCreate, RequirementUpdate
-from app.modules.targets import service as target_service
-from app.modules.targets.schemas import TargetSetRequest
 from app.modules.chat import service as chat_service
+from app.modules.chat.models import ChatRoom
+from app.modules.clients import service as client_service
+from app.modules.clients.models import Client
+from app.modules.clients.schemas import ClientCreate, ClientUpdate
 from app.modules.notifications import service as notif_service
 from app.modules.reports import service as report_service
-from app.modules.resumes import service as resume_service
-from app.modules.resumes.schemas import ResumeUpdate
+from app.modules.requirements import service as req_service
+from app.modules.requirements.schemas import RequirementCreate
+from app.modules.resumes.models import Resume
+from app.modules.targets import service as target_service
+from app.modules.targets.schemas import TargetSetRequest
+from app.modules.users import service as user_service
+from app.modules.users.models import User
+from app.modules.users.schemas import UserCreate, UserUpdate
+from sqlalchemy import select
 
 
 async def run_lifecycle_tests():
@@ -229,7 +221,7 @@ async def run_lifecycle_tests():
         print(f"✅ Export Chat passed ({len(transcript)} messages exported)")
 
         # Delete Message
-        del_res = await chat_service.delete_message(db, msg.id, admin)
+        _del_res = await chat_service.delete_message(db, msg.id, admin)
         print("✅ Delete Message passed")
 
         # -----------------------------------------------------------------------

@@ -9,10 +9,11 @@ Verifies:
 """
 
 import asyncio
-from sqlalchemy import select
+
 from app.core.database import async_session_factory
-from app.modules.users.models import User
 from app.modules.dashboard.service import get_client_dashboard
+from app.modules.users.models import User
+from sqlalchemy import select
 
 
 async def run_client_dashboard_test():

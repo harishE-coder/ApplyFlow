@@ -262,7 +262,7 @@ export function RecruitersPage() {
     setSelectedRecruiterForTarget(emp);
     const firstClientId = emp.assigned_clients?.[0]?.client_id || emp.assigned_clients?.[0]?.id || clients[0]?.id || '';
     setTargetClientId(firstClientId);
-    setTargetValue(emp.daily_target || 25);
+    setTargetValue(emp.daily_target ?? 0);
     setIsTargetModalOpen(true);
   };
 
@@ -407,7 +407,7 @@ export function RecruitersPage() {
       key: 'daily_target',
       render: (val) => (
         <div className="flex items-center gap-2">
-          <span className="text-h3 font-extrabold text-[#FF8A00]">{val ?? 25}</span>
+          <span className="text-h3 font-extrabold text-[#FF8A00]">{val ?? 0}</span>
           <span className="text-caption text-[#64748B]">apps / day</span>
         </div>
       ),

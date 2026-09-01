@@ -1,28 +1,29 @@
-import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from sqlalchemy import select, or_, and_, func, distinct, delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import UploadFile, HTTPException
+from typing import Any
 
-from app.modules.users.models import User
+from fastapi import HTTPException, UploadFile
+from sqlalchemy import delete, distinct, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.cache import invalidate_dashboard_cache
+from app.modules.activity_logs.models import ActivityLog
+from app.modules.applications.models import Application, ApplicationEvent
 from app.modules.clients.models import Client, EmployeeClient
 from app.modules.requirements.models import Requirement
 from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application, ApplicationEvent
-from app.modules.activity_logs.models import ActivityLog
 from app.modules.resumes.parser import parse_resume_filename
 from app.modules.resumes.schemas import (
-    ResumeResponse,
-    ResumeUpdate,
-    FindResumeMatchResponse,
-    ParsedFileUploadItem,
     BulkUploadResponse,
     ConfirmManualUploadItem,
+    FindResumeMatchResponse,
+    ParsedFileUploadItem,
+    ResumeResponse,
+    ResumeUpdate,
     UploadDashboardStats,
 )
-from app.services.google_drive import drive_service, UPLOAD_DIR
-from app.core.cache import invalidate_dashboard_cache
+from app.modules.users.models import User
+from app.services.google_drive import UPLOAD_DIR, drive_service
 
 
 def _parse_to_date(val) -> date | None:
@@ -385,7 +386,6 @@ async def update_resume(
     if payload.is_note_shared is not None:
         resume.is_note_shared = payload.is_note_shared
 
-    from app.modules.activity_logs.models import ActivityLog
     db.add(
         ActivityLog(
             user_id=current_user.id,
@@ -405,10 +405,11 @@ async def dispatch_upload_notifications_and_stats(
     batch_date: date,
 ) -> UploadDashboardStats:
     """Auto-sync workflow: Activity Log + Multi-Role In-App Notifications + Live Stats."""
+    from datetime import date as dt_date
+    from datetime import datetime
+
     from app.modules.notifications.models import Notification
     from app.modules.users.models import SubAdminAssignment
-    from app.modules.activity_logs.models import ActivityLog
-    from datetime import datetime, date as dt_date
 
     today_date = batch_date or dt_date.today()
     today_start = datetime.combine(today_date, datetime.min.time())
@@ -605,8 +606,7 @@ async def process_bulk_upload(
 
     # Fast synchronous local storage write & DB preparation (sub-millisecond)
     if tasks_to_upload:
-        from app.modules.activity_logs.models import ActivityLog
-        entities_to_add = []
+        entities_to_add: list[Any] = []
         bg_sync_items = []
 
         for f_bytes, f_name, f_parsed, t_comp, t_role, c_name in tasks_to_upload:

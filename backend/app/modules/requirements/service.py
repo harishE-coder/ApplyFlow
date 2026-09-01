@@ -1,19 +1,23 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import select, func, or_, delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException, status
 
-from app.modules.users.models import User
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.requirements.models import Requirement
-from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
-from app.modules.activity_logs.models import ActivityLog
-from app.modules.notifications.service import create_notification
-from app.modules.requirements.schemas import RequirementCreate, RequirementUpdate, RequirementResponse
-from app.modules.resumes.service import get_allowed_client_ids
+from fastapi import HTTPException, status
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.cache import invalidate_dashboard_cache
+from app.modules.activity_logs.models import ActivityLog
+from app.modules.applications.models import Application
+from app.modules.clients.models import Client
+from app.modules.requirements.models import Requirement
+from app.modules.requirements.schemas import (
+    RequirementCreate,
+    RequirementResponse,
+    RequirementUpdate,
+)
+from app.modules.resumes.models import Resume
+from app.modules.resumes.service import get_allowed_client_ids
+from app.modules.users.models import User
 
 
 async def get_requirements(
@@ -304,6 +308,71 @@ async def complete_requirement(
     return req
 
 
+async def mark_requirement_done(
+    db: AsyncSession, req_id: uuid.UUID, current_user: User
+) -> Requirement:
+    req = await get_requirement_by_id(db, req_id, current_user)
+    if not req:
+        raise HTTPException(status_code=404, detail="Job opening not found")
+    return await complete_requirement(db, current_user, req)
+
+
+async def reopen_requirement(
+    db: AsyncSession, req_id: uuid.UUID, current_user: User
+) -> Requirement:
+    req = await get_requirement_by_id(db, req_id, current_user)
+    if not req:
+        raise HTTPException(status_code=404, detail="Job opening not found")
+
+    req.status = "active"
+    req.completed_by = None
+    req.completed_at = None
+
+    db.add(
+        ActivityLog(
+            user_id=current_user.id,
+            action="requirement_reopened",
+            details={
+                "requirement_id": str(req.id),
+                "role_code": req.role_code,
+                "company": req.company,
+                "job_title": req.job_title,
+                "message": f"{current_user.name} reopened {req.company} – {req.job_title}.",
+            },
+        )
+    )
+    await db.flush()
+    invalidate_dashboard_cache()
+    return req
+
+
+async def archive_requirement(
+    db: AsyncSession, req_id: uuid.UUID, current_user: User
+) -> Requirement:
+    req = await get_requirement_by_id(db, req_id, current_user)
+    if not req:
+        raise HTTPException(status_code=404, detail="Job opening not found")
+
+    req.status = "archived"
+
+    db.add(
+        ActivityLog(
+            user_id=current_user.id,
+            action="requirement_archived",
+            details={
+                "requirement_id": str(req.id),
+                "role_code": req.role_code,
+                "company": req.company,
+                "job_title": req.job_title,
+                "message": f"{current_user.name} archived {req.company} – {req.job_title}.",
+            },
+        )
+    )
+    await db.flush()
+    invalidate_dashboard_cache()
+    return req
+
+
 async def delete_requirement(
     db: AsyncSession, current_user: User, req: Requirement
 ) -> None:
@@ -325,3 +394,12 @@ async def delete_requirement(
         await db.flush()
 
     invalidate_dashboard_cache()
+
+
+async def safe_delete_requirement(
+    db: AsyncSession, req_id: uuid.UUID, current_user: User
+) -> None:
+    req = await get_requirement_by_id(db, req_id, current_user)
+    if not req:
+        raise HTTPException(status_code=404, detail="Job opening not found")
+    await delete_requirement(db, current_user, req)

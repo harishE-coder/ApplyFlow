@@ -1,23 +1,24 @@
 import uuid
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.modules.users.models import User
 from app.modules.activity_logs.models import ActivityLog
+from app.modules.users.models import User
 
 router = APIRouter(prefix="/api/activity-logs", tags=["activity-logs"])
 
 
 class ActivityLogResponse(BaseModel):
     id: uuid.UUID
-    user_id: uuid.UUID
-    user_name: str
-    user_role: str
+    user_id: uuid.UUID | None = None
+    user_name: str = "System / Deleted User"
+    user_role: str = "system"
     action: str
     details: dict | None = None
     created_at: datetime
@@ -36,7 +37,7 @@ async def list_activity_logs(
     """Retrieve activity audit logs (Admin sees all; Employee/Client sees own)."""
     query = (
         select(ActivityLog, User.name, User.role)
-        .join(User, ActivityLog.user_id == User.id)
+        .outerjoin(User, ActivityLog.user_id == User.id)
         .order_by(desc(ActivityLog.created_at))
     )
 
@@ -56,8 +57,8 @@ async def list_activity_logs(
         ActivityLogResponse(
             id=log.id,
             user_id=log.user_id,
-            user_name=uname,
-            user_role=urole,
+            user_name=uname or "System / Deleted User",
+            user_role=urole or "system",
             action=log.action,
             details=log.details,
             created_at=log.created_at,

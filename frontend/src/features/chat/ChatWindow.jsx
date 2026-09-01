@@ -1,25 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Building2,
   Users,
   FileText,
   Download,
-  ExternalLink,
   Trash2,
   Eye,
-  Shield,
   Clock,
   Check,
   CheckCheck,
-  Paperclip,
   Sparkles,
   ArrowLeft,
   MoreVertical,
   Lock,
   Unlock,
   Archive,
-  FileCode,
-  AlertCircle,
 } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
 import { Dropdown } from '@/components/ui/Dropdown';
@@ -46,7 +41,25 @@ function formatDateHeader(dateStr) {
   yesterday.setDate(now.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
 
-  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString([], {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function MessageStatusIcon({ status }) {
+  if (status === 'pending') {
+    return <Clock className="w-3 h-3 text-[#94A3B8]" title="Sending..." />;
+  }
+  if (status === 'read') {
+    return <CheckCheck className="w-3.5 h-3.5 text-[#38BDF8]" title="Read" />;
+  }
+  if (status === 'delivered') {
+    return <CheckCheck className="w-3.5 h-3.5 text-[#94A3B8]" title="Delivered" />;
+  }
+  return <Check className="w-3.5 h-3.5 text-[#94A3B8]" title="Sent" />;
 }
 
 export function ChatWindow({
@@ -54,6 +67,9 @@ export function ChatWindow({
   messages = [],
   onlineUsers = [],
   typingUsers = {},
+  hasMore = false,
+  loadingMore = false,
+  onLoadMoreMessages,
   onSendMessage,
   onUploadAttachment,
   onShareResume,
@@ -70,21 +86,71 @@ export function ChatWindow({
   const [isExporting, setIsExporting] = useState(false);
   const messagesEndRef = useRef(null);
   const scrollContainerRef = useRef(null);
+  const prevMessagesLengthRef = useRef(messages.length);
+  const firstMessageIdRef = useRef(messages[0]?.id);
 
   const isReadOnly = room?.status === 'read_only';
 
-  // Auto-scroll to bottom on messages change
-  const scrollToBottom = (behavior = 'smooth') => {
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
-  };
+  }, []);
 
+  // Auto-scroll on initial room switch
   useEffect(() => {
     scrollToBottom('auto');
-  }, [room?.id]);
+    prevMessagesLengthRef.current = messages.length;
+    firstMessageIdRef.current = messages[0]?.id;
+  }, [room?.id, scrollToBottom]);
 
+  // Intelligent auto-scroll on new messages
   useEffect(() => {
-    scrollToBottom('smooth');
-  }, [messages.length]);
+    const prevLen = prevMessagesLengthRef.current;
+    const currentLen = messages.length;
+    const prevFirstId = firstMessageIdRef.current;
+    const currentFirstId = messages[0]?.id;
+
+    prevMessagesLengthRef.current = currentLen;
+    firstMessageIdRef.current = currentFirstId;
+
+    // If messages were prepended at top (history load), do not auto scroll to bottom
+    if (currentLen > prevLen && prevFirstId !== currentFirstId && prevFirstId !== undefined) {
+      return;
+    }
+
+    // If new message was appended at bottom
+    if (currentLen > prevLen) {
+      const lastMsg = messages[currentLen - 1];
+      const isOwn = lastMsg?.sender?.id === user?.id;
+
+      if (isOwn) {
+        scrollToBottom('smooth');
+      } else if (scrollContainerRef.current) {
+        const { scrollHeight, scrollTop, clientHeight } = scrollContainerRef.current;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+        if (isNearBottom) {
+          scrollToBottom('smooth');
+        }
+      }
+    }
+  }, [messages, user?.id, scrollToBottom]);
+
+  // Scroll anchor preservation for infinite scroll
+  const handleScroll = useCallback(() => {
+    if (!scrollContainerRef.current || loadingMore || !hasMore) return;
+    const container = scrollContainerRef.current;
+
+    if (container.scrollTop < 60) {
+      const prevScrollHeight = container.scrollHeight;
+      onLoadMoreMessages?.()?.then(() => {
+        requestAnimationFrame(() => {
+          if (scrollContainerRef.current) {
+            scrollContainerRef.current.scrollTop =
+              scrollContainerRef.current.scrollHeight - prevScrollHeight;
+          }
+        });
+      });
+    }
+  }, [hasMore, loadingMore, onLoadMoreMessages]);
 
   const handleExportChat = async () => {
     if (!room) return;
@@ -143,13 +209,13 @@ export function ChatWindow({
         </div>
         <h3 className="text-h3 font-bold text-[#081226]">Select a Client Chat</h3>
         <p className="text-small text-[#64748B] max-w-sm text-center mt-1">
-          Pick a Service Client conversation from the left to review messages, coordinate targets, and share candidate profiles.
+          Pick a Service Client conversation from the left to review messages, coordinate targets,
+          and share candidate profiles.
         </p>
       </div>
     );
   }
 
-  // Generate typing display string
   const typingUserNames = Object.entries(typingUsers)
     .filter(([uid]) => uid !== user?.id)
     .map(([, name]) => name);
@@ -161,7 +227,6 @@ export function ChatWindow({
       ? `${typingUserNames.join(', ')} are typing...`
       : '';
 
-  // Room header menu items
   const roomMenuItems = [
     {
       icon: Download,
@@ -183,7 +248,6 @@ export function ChatWindow({
     });
   }
 
-  // Group messages by calendar date
   const groupedMessages = [];
   let currentDate = null;
 
@@ -198,7 +262,6 @@ export function ChatWindow({
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#FFFFFF] min-w-0">
-      {/* Sticky Header */}
       <div className="h-16 px-3 sm:px-6 border-b border-[#E2E8F0] bg-white/95 backdrop-blur-xs flex items-center justify-between z-10 shrink-0">
         <div className="flex items-center gap-2 sm:gap-3.5 min-w-0">
           {onBackMobile && (
@@ -218,7 +281,9 @@ export function ChatWindow({
             <div className="flex items-center gap-2">
               <h2 className="text-small font-bold text-[#081226] truncate">{room.client_name}</h2>
               <span
-                className={`w-2 h-2 rounded-full shrink-0 ${isReadOnly ? 'bg-[#94A3B8]' : 'bg-[#16A34A]'}`}
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  isReadOnly ? 'bg-[#94A3B8]' : 'bg-[#16A34A]'
+                }`}
                 title={isReadOnly ? 'Read-only room' : 'Active room'}
               />
               {isReadOnly && (
@@ -233,12 +298,17 @@ export function ChatWindow({
           </div>
         </div>
 
-        {/* Header Right Badges & Dropdown */}
         <div className="flex items-center gap-2.5">
           <div className="flex items-center -space-x-1.5 overflow-hidden">
             {room.participants?.slice(0, 4).map((p) => (
               <div key={p.id} title={`${p.name} (${p.role})`}>
-                <Avatar name={p.name} size="xs" variant={p.role === 'admin' ? 'blue' : p.role === 'client' ? 'orange' : 'teal'} />
+                <Avatar
+                  name={p.name}
+                  size="xs"
+                  variant={
+                    p.role === 'admin' ? 'blue' : p.role === 'client' ? 'orange' : 'teal'
+                  }
+                />
               </div>
             ))}
           </div>
@@ -262,18 +332,32 @@ export function ChatWindow({
         </div>
       </div>
 
-      {/* Read-Only Notice Banner */}
       {isReadOnly && (
         <div className="px-6 py-2 bg-[#F8FAFC] border-b border-[#E2E8F0] flex items-center gap-2 text-caption text-[#64748B]">
           <Lock className="w-3.5 h-3.5 text-[#94A3B8] shrink-0" />
-          <span>This conversation is in <strong>read-only mode</strong>. History and shared resumes remain preserved.</span>
+          <span>
+            This conversation is in <strong>read-only mode</strong>. History and shared resumes
+            remain preserved.
+          </span>
         </div>
       )}
 
-      {/* Messages Scroll Area */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-[#F8FAFC]/50">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-[#F8FAFC]/50"
+      >
+        {loadingMore && (
+          <div className="py-2 text-center flex items-center justify-center gap-2 text-caption text-[#64748B]">
+            <div className="w-4 h-4 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+            <span>Loading older messages...</span>
+          </div>
+        )}
+
         {loadingMessages ? (
-          <div className="py-20 text-center text-caption text-[#64748B]">Loading conversation history...</div>
+          <div className="py-20 text-center text-caption text-[#64748B]">
+            Loading conversation history...
+          </div>
         ) : messages.length === 0 ? (
           <div className="py-20 text-center text-[#64748B] select-none">
             <div className="w-12 h-12 rounded-2xl bg-white border border-[#E2E8F0] shadow-xs flex items-center justify-center mx-auto mb-2 text-[#94A3B8]">
@@ -281,7 +365,8 @@ export function ChatWindow({
             </div>
             <p className="text-small font-semibold text-[#081226]">Conversation Started</p>
             <p className="text-caption mt-0.5">
-              Welcome to the {room.client_name} chat room. Post targets, coordinate updates, or share candidate resumes.
+              Welcome to the {room.client_name} chat room. Post targets, coordinate updates, or
+              share candidate resumes.
             </p>
           </div>
         ) : (
@@ -299,24 +384,35 @@ export function ChatWindow({
             const msg = item.data;
             const isOwn = msg.sender.id === user?.id;
             const isResume = msg.attachment_type === 'resume';
-            const isFile = msg.attachment_type === 'pdf' || msg.attachment_type === 'file';
             const canDelete = !msg.is_deleted && (isOwn || isAdmin);
 
             return (
               <div
                 key={msg.id}
-                className={`flex items-start gap-3 group ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}
+                className={`flex items-start gap-3 group ${
+                  isOwn ? 'flex-row-reverse' : 'flex-row'
+                }`}
               >
                 <div className="shrink-0 mt-0.5">
                   <Avatar
                     name={msg.sender.name}
                     size="sm"
-                    variant={msg.sender.role === 'admin' ? 'blue' : msg.sender.role === 'client' ? 'orange' : 'teal'}
+                    variant={
+                      msg.sender.role === 'admin'
+                        ? 'blue'
+                        : msg.sender.role === 'client'
+                        ? 'orange'
+                        : 'teal'
+                    }
                   />
                 </div>
 
-                <div className={`flex flex-col max-w-[80%] sm:max-w-[70%] ${isOwn ? 'items-end' : 'items-start'}`}>
-                  <div className="flex items-center gap-2 mb-1 px-1">
+                <div
+                  className={`flex flex-col max-w-[80%] sm:max-w-[70%] ${
+                    isOwn ? 'items-end' : 'items-start'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1 px-1">
                     <span className="text-caption font-bold text-[#081226]">
                       {isOwn ? 'You' : msg.sender.name}
                     </span>
@@ -326,6 +422,11 @@ export function ChatWindow({
                     <span className="text-[10px] text-[#94A3B8]">
                       {formatMessageTime(msg.created_at)}
                     </span>
+                    {isOwn && !msg.is_deleted && (
+                      <span className="inline-flex items-center ml-0.5">
+                        <MessageStatusIcon status={msg.status} />
+                      </span>
+                    )}
                   </div>
 
                   <div className="relative group/bubble">
@@ -371,7 +472,11 @@ export function ChatWindow({
                       <button
                         type="button"
                         onClick={() => onDeleteMessage(msg.id)}
-                        title={isAdmin && !isOwn ? 'Delete message (Admin oversight)' : 'Delete your message'}
+                        title={
+                          isAdmin && !isOwn
+                            ? 'Delete message (Admin oversight)'
+                            : 'Delete your message'
+                        }
                         className={`absolute top-2 opacity-0 group-hover/bubble:opacity-100 p-1.5 text-[#94A3B8] hover:text-[#EF4444] hover:bg-[#F1F5F9] rounded-lg transition-all cursor-pointer ${
                           isOwn ? '-left-8' : '-right-8'
                         }`}
@@ -388,7 +493,6 @@ export function ChatWindow({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Bar or Read-Only State */}
       {!isReadOnly ? (
         <ChatInput
           onSendMessage={onSendMessage}
@@ -403,7 +507,6 @@ export function ChatWindow({
         </div>
       )}
 
-      {/* Modals */}
       <ResumeShareModal
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
@@ -420,3 +523,5 @@ export function ChatWindow({
     </div>
   );
 }
+
+export default ChatWindow;

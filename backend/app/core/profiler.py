@@ -8,8 +8,9 @@ Provides real-time telemetry on every incoming API request:
 - Visual slow-query alerts for requests exceeding 200ms
 """
 
-import time
 import contextvars
+import time
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response

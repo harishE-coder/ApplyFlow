@@ -41,12 +41,6 @@ import { formatDate, formatRelativeTime, cn } from '@/utils/cn';
 // Lazy-loaded Charts Subcomponent
 const AdminCharts = lazy(() => import('./charts/AdminCharts'));
 
-function hashString(str) {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) hash = (hash << 5) - hash + str.charCodeAt(i);
-  return Math.abs(hash);
-}
-
 export function AdminDashboard() {
   const { isAdmin, isSubAdmin, bootstrapData, consumeBootstrapDashboard } = useAuth();
   const { error: toastError } = useToast();
@@ -60,11 +54,16 @@ export function AdminDashboard() {
 
   const [loading, setLoading] = useState(() => !initialData);
 
-  // 1. Reactive Top Filters
+  // 1. Reactive Top Filters (Batched selection to guarantee atomic cascading updates)
   const [clients, setClients] = useState(() => initialData?.clients || []);
   const [allEmployees, setAllEmployees] = useState(() => initialData?.all_employees || []);
-  const [selectedClientId, setSelectedClientId] = useState('');
-  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+  const [filterSelection, setFilterSelection] = useState({
+    clientId: '',
+    employeeId: '',
+  });
+  const selectedClientId = filterSelection.clientId;
+  const selectedEmployeeId = filterSelection.employeeId;
+
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]); // Single Date Picker
   const [quickDateFilter, setQuickDateFilter] = useState('today'); // 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom'
 
@@ -87,16 +86,25 @@ export function AdminDashboard() {
   }, [selectedClientId, allEmployees]);
 
   const handleClientChange = useCallback((newClientId) => {
-    setSelectedClientId(newClientId);
-    if (newClientId) {
+    setFilterSelection((prev) => {
+      if (!newClientId) {
+        return { clientId: '', employeeId: prev.employeeId };
+      }
       const stillValid = allEmployees.some(
         (emp) =>
-          (emp.id || emp.employee_id) === selectedEmployeeId &&
+          (emp.id || emp.employee_id) === prev.employeeId &&
           emp.assigned_clients?.some((c) => (c.client_id || c.id) === newClientId)
       );
-      if (!stillValid) setSelectedEmployeeId('');
-    }
-  }, [allEmployees, selectedEmployeeId]);
+      return {
+        clientId: newClientId,
+        employeeId: stillValid ? prev.employeeId : '',
+      };
+    });
+  }, [allEmployees]);
+
+  const handleEmployeeChange = useCallback((newEmployeeId) => {
+    setFilterSelection((prev) => ({ ...prev, employeeId: newEmployeeId }));
+  }, []);
 
   const handleQuickDateSelect = useCallback((filterKey) => {
     setQuickDateFilter(filterKey);
@@ -164,23 +172,32 @@ export function AdminDashboard() {
     fetchData();
   }, [fetchData]);
 
-  // Real-time listener for resume uploads with stable ref to prevent re-attaching
+  // Real-time listener with debounced focus handler to prevent Alt+Tab storms
   const fetchDataRef = useRef(fetchData);
   fetchDataRef.current = fetchData;
 
   useEffect(() => {
+    let focusTimeout = null;
     const handleUploadEvent = () => {
       fetchDataRef.current();
     };
+    const handleFocusEvent = () => {
+      if (focusTimeout) clearTimeout(focusTimeout);
+      focusTimeout = setTimeout(() => {
+        fetchDataRef.current();
+      }, 500);
+    };
+
     window.addEventListener('resume-uploaded', handleUploadEvent);
     window.addEventListener('application-created', handleUploadEvent);
     window.addEventListener('application-updated', handleUploadEvent);
-    window.addEventListener('focus', handleUploadEvent);
+    window.addEventListener('focus', handleFocusEvent);
     return () => {
+      if (focusTimeout) clearTimeout(focusTimeout);
       window.removeEventListener('resume-uploaded', handleUploadEvent);
       window.removeEventListener('application-created', handleUploadEvent);
       window.removeEventListener('application-updated', handleUploadEvent);
-      window.removeEventListener('focus', handleUploadEvent);
+      window.removeEventListener('focus', handleFocusEvent);
     };
   }, []);
 
@@ -193,6 +210,8 @@ export function AdminDashboard() {
   // -------------------------------------------------------------
   // CALCULATIONS: TARGET PROGRESS IS BASED ON APPLICATIONS SUBMITTED
   // -------------------------------------------------------------
+  // DAILY TARGET PROGRESS BAR METRICS (Single source of truth from backend overview.target_sum)
+  // -------------------------------------------------------------
   const {
     totalDailyTarget,
     applicationsSubmitted,
@@ -200,28 +219,11 @@ export function AdminDashboard() {
     remainingTarget,
     activeRecruitersCount,
   } = useMemo(() => {
-    let targetSum = 0;
-    let submittedCount = overview?.total_applications ?? 0;
-    let recruiters = availableEmployees.length || 1;
-
-    if (selectedClientId) {
-      // Sum targets assigned specifically for this client
-      const clientTargets = allTargets.filter((t) => t.client_id === selectedClientId);
-      targetSum = clientTargets.reduce((sum, t) => sum + (t.daily_target || 0), 0);
-      if (targetSum === 0) targetSum = 25; // fallback default
-      recruiters = clientTargets.length || (availableEmployees.length || 1);
-    } else if (selectedEmployeeId) {
-      // Sum targets for this specific employee
-      const empTargets = allTargets.filter((t) => (t.employee_id || t.id) === selectedEmployeeId);
-      targetSum = empTargets.reduce((sum, t) => sum + (t.daily_target || 0), 0);
-      if (targetSum === 0) targetSum = 35;
-      recruiters = 1;
-    } else {
-      // All clients + All employees
-      targetSum = allTargets.reduce((sum, t) => sum + (t.daily_target || 0), 0);
-      if (targetSum === 0) targetSum = 60;
-      recruiters = allEmployees.length || 2;
-    }
+    const targetSum = overview?.target_sum ?? 0;
+    const submittedCount = overview?.today_applications ?? overview?.today_uploads ?? 0;
+    const recruiters = selectedClientId
+      ? (availableEmployees.length || 0)
+      : (availableEmployees.length || allEmployees.length || 0);
 
     const pct = targetSum > 0 ? Math.min(Math.round((submittedCount / targetSum) * 100), 100) : 0;
     const remaining = Math.max(0, targetSum - submittedCount);
@@ -233,26 +235,15 @@ export function AdminDashboard() {
       remainingTarget: remaining,
       activeRecruitersCount: recruiters,
     };
-  }, [selectedClientId, selectedEmployeeId, allTargets, overview, availableEmployees, allEmployees]);
+  }, [overview, selectedClientId, availableEmployees, allEmployees]);
 
   // -------------------------------------------------------------
-  // RECRUITER PERFORMANCE ROWS (Calculated per employee based on Applications Submitted)
+  // RECRUITER PERFORMANCE ROWS (Calculated per employee based on backend target and uploads)
   // -------------------------------------------------------------
   const recruiterRows = useMemo(() => {
     let list = teamPerformance.map((emp) => {
-      const empId = emp.id || emp.employee_id;
-      // Calculate target for this recruiter (scoped by selected client if any)
-      let target = 0;
-      if (selectedClientId) {
-        const t = allTargets.find((tg) => (tg.employee_id || tg.id) === empId && tg.client_id === selectedClientId);
-        target = t ? t.daily_target : 0;
-      } else {
-        const empTargs = allTargets.filter((tg) => (tg.employee_id || tg.id) === empId);
-        target = empTargs.reduce((s, tg) => s + (tg.daily_target || 0), 0);
-        if (target === 0) target = emp.daily_target || 25;
-      }
-
-      const submitted = emp.total_applications || 0;
+      const target = emp.daily_target ?? 0;
+      const submitted = emp.today_applications ?? emp.today_uploads ?? emp.total_applications ?? 0;
       const remaining = Math.max(0, target - submitted);
       const completion = target > 0 ? Math.min(Math.round((submitted / target) * 100), 100) : 0;
 
@@ -276,17 +267,19 @@ export function AdminDashboard() {
       list = list.filter((emp) => (emp.id || emp.employee_id) === selectedEmployeeId);
     }
 
-    // Sort based on sortOption
-    if (sortOption === 'highest') {
+    // Sort
+    if (sortOption === 'name') {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortOption === 'completion') {
       list.sort((a, b) => b.completion - a.completion);
-    } else if (sortOption === 'lowest') {
-      list.sort((a, b) => a.completion - b.completion);
+    } else if (sortOption === 'target') {
+      list.sort((a, b) => b.target - a.target);
     } else if (sortOption === 'remaining') {
       list.sort((a, b) => b.remaining - a.remaining);
     }
 
     return list;
-  }, [teamPerformance, allTargets, selectedClientId, selectedEmployeeId, sortOption]);
+  }, [teamPerformance, selectedClientId, selectedEmployeeId, sortOption]);
 
   // -------------------------------------------------------------
   // 4 INTERACTIVE CHARTS DATA
@@ -295,31 +288,36 @@ export function AdminDashboard() {
   const targetVsAppsData = useMemo(() => {
     return recruiterRows.map((r) => ({
       employee: r.name ? r.name.split(' ')[0] : 'Recruiter',
-      target: r.target || 25,
-      submitted: r.submitted || 0,
+      target: r.target ?? 0,
+      submitted: r.submitted ?? 0,
     }));
   }, [recruiterRows]);
 
   // 2. Target Completion Trend (7-Day Line Chart)
   const completionTrendData = useMemo(() => {
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    // 7-day completion curve reflecting ApplyFlow activity
-    return [
-      { day: 'Mon', completion: 70 },
-      { day: 'Tue', completion: 85 },
-      { day: 'Wed', completion: 92 },
-      { day: 'Thu', completion: 100 },
-      { day: 'Fri', completion: 96 },
-      { day: 'Sat', completion: 110 },
-      { day: 'Sun', completion: completionPercentage || 88 },
-    ];
-  }, [completionPercentage]);
+    if (overview?.daily_uploads_trend && overview.daily_uploads_trend.length > 0) {
+      return overview.daily_uploads_trend.map((pt) => {
+        const t = pt.target || totalDailyTarget || 0;
+        const comp = t > 0 ? Math.round((pt.uploads / t) * 100) : (pt.uploads > 0 ? 100 : 0);
+        return {
+          day: pt.date,
+          date: pt.date,
+          uploads: pt.uploads,
+          target: t,
+          completion: comp,
+        };
+      });
+    }
+    return [];
+  }, [overview?.daily_uploads_trend, totalDailyTarget]);
 
   // 3. Client Performance Comparison (Horizontal Bar Chart)
   const clientComparisonData = useMemo(() => {
     return clientCards.map((c) => ({
       client: c.company_name,
-      completion: c.target_completion_pct || Math.floor(75 + (hashString(c.company_name) % 35)),
+      completion: c.completion_rate ?? 0,
+      applications: c.applications_received_count ?? 0,
+      requirements: c.active_requirements_count ?? 0,
     }));
   }, [clientCards]);
 
@@ -334,21 +332,24 @@ export function AdminDashboard() {
   ];
 
   const statusDistributionData = useMemo(() => {
-    const dist = overview?.application_status_distribution || {
-      draft: 8,
-      submitted: 24,
-      shortlisted: 10,
-      rejected: 5,
-      hold: 3,
-      closed: 6,
-    };
-
-    return STATUS_CONFIGS.map((cfg) => ({
-      name: cfg.name,
-      value: dist[cfg.key] || 0,
-      color: cfg.color,
-    })).filter((it) => it.value >= 0);
-  }, [overview]);
+    const rawDist = overview?.application_status_distribution;
+    if (Array.isArray(rawDist) && rawDist.length > 0) {
+      const colors = ['#0D6EFD', '#16A34A', '#FF8A00', '#EF4444', '#9333EA', '#64748B'];
+      return rawDist.map((item, idx) => ({
+        name: item.name || 'Submitted',
+        value: item.value || 0,
+        color: colors[idx % colors.length],
+      }));
+    }
+    if (rawDist && typeof rawDist === 'object') {
+      return STATUS_CONFIGS.map((cfg) => ({
+        name: cfg.name,
+        value: rawDist[cfg.key] || 0,
+        color: cfg.color,
+      })).filter((it) => it.value > 0);
+    }
+    return [];
+  }, [overview?.application_status_distribution]);
 
   if (loading && !overview) {
     return <BrandedLoader size="lg" label="Loading Executive Operations & Target Analytics..." />;
@@ -423,7 +424,7 @@ export function AdminDashboard() {
             </label>
             <select
               value={selectedEmployeeId}
-              onChange={(e) => setSelectedEmployeeId(e.target.value)}
+              onChange={(e) => handleEmployeeChange(e.target.value)}
               className="w-full h-[44px] px-3.5 rounded-xl text-small font-medium bg-[#F8FAFC] text-[#081226] border border-[#E2E8F0] shadow-xs hover:border-[#CBD5E1] focus:outline-none focus:border-[#0D6EFD]"
             >
               <option value="">All Recruiters ({availableEmployees.length})</option>
@@ -652,10 +653,10 @@ export function AdminDashboard() {
         </div>
 
         {/* Desktop & Tablet Table Rendering (screens >= 640px) */}
-        <div className="hidden sm:block overflow-x-auto">
+        <div className="hidden sm:block overflow-x-auto max-h-[480px] overflow-y-auto rounded-xl border border-[#F1F5F9]">
           <table className="w-full text-left border-collapse text-small">
-            <thead>
-              <tr className="bg-[#F8FAFC] border-b border-[#E2E8F0] text-caption font-bold text-[#64748B] uppercase">
+            <thead className="sticky top-0 z-10 bg-[#F8FAFC]/95 backdrop-blur-xs">
+              <tr className="border-b border-[#E2E8F0] text-caption font-bold text-[#64748B] uppercase">
                 <th className="px-4 py-3">Recruiter</th>
                 <th className="px-4 py-3 text-center">Daily Target</th>
                 <th className="px-4 py-3 text-center">Submitted</th>

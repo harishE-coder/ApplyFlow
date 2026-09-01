@@ -3,6 +3,7 @@ Unit Test for ApplyFlow Strict ServiceClient Filename Verification
 """
 from app.modules.resumes.parser import parse_resume_filename
 
+
 def test_service_client_verification_rules():
     print("\n--- Test 1: Teksystems with matching filename ---")
     res1 = parse_resume_filename("Teksystems_Google_Data Analyst.pdf", selected_client_name="Teksystems")

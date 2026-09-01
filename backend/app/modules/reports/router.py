@@ -1,12 +1,12 @@
 import uuid
-from fastapi import APIRouter, Depends, Query, Response
-from fastapi.responses import Response as FastAPIResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
-from app.modules.users.models import User
 from app.modules.reports import service
+from app.modules.users.models import User
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import Response as FastAPIResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 

@@ -7,16 +7,13 @@ Validates:
 4. Role permission isolation and security boundaries.
 """
 
-import pytest
 import io
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy import select
-from app.main import app
+
+import pytest
 from app.core.config import settings
-from app.core.database import async_session_factory
-from app.core.security import hash_password
-from app.modules.users.models import User
+from app.main import app
 from app.modules.resumes.parser import parse_resume_filename
+from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture(scope="session")
@@ -50,6 +47,25 @@ async def test_filename_parser():
 
 @pytest.mark.anyio
 async def test_admin_flow_and_exports():
+    from app.core.database import async_session_factory
+    from app.core.security import hash_password
+    from app.modules.users.models import User
+    from sqlalchemy import select
+
+    async with async_session_factory() as db:
+        admin = (await db.execute(select(User).where(User.email == settings.admin_email.lower()))).scalar_one_or_none()
+        if not admin:
+            admin = User(
+                name=settings.admin_name,
+                email=settings.admin_email.lower(),
+                password_hash=hash_password(settings.admin_password),
+                role="admin",
+                is_active=True,
+                status="active",
+            )
+            db.add(admin)
+            await db.commit()
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver", timeout=60.0) as client:
         # 1. Admin Login with production credentials
         login_res = await client.post(

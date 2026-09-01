@@ -1,19 +1,42 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Bell } from 'lucide-react';
 import { ChatRoomList } from './ChatRoomList';
 import { ChatWindow } from './ChatWindow';
 import { useChatWebSocket } from './useChatWebSocket';
 import { useToast } from '@/components/ui/Toast';
+import { useAuth } from '@/features/auth/AuthContext';
+import {
+  isPushNotificationSupported,
+  getNotificationPermission,
+  subscribeToPushNotifications,
+} from '@/services/pushNotifications';
 import api from '@/services/api';
 import { cn } from '@/utils/cn';
 
 export function ChatPage() {
+  const { user } = useAuth();
+  const { roomId: urlRoomId } = useParams();
+  const navigate = useNavigate();
   const { error: toastError, success: toastSuccess } = useToast();
   const [rooms, setRooms] = useState([]);
-  const [activeRoomId, setActiveRoomId] = useState(null);
+  const [activeRoomId, setActiveRoomId] = useState(urlRoomId || null);
   const [messages, setMessages] = useState([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [isMobileViewingChat, setIsMobileViewingChat] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [isMobileViewingChat, setIsMobileViewingChat] = useState(Boolean(urlRoomId));
+  const [pushPermission, setPushPermission] = useState(() => getNotificationPermission());
+  const [enablingPush, setEnablingPush] = useState(false);
+
+  // Sync route param with activeRoomId
+  useEffect(() => {
+    if (urlRoomId && urlRoomId !== activeRoomId) {
+      setActiveRoomId(urlRoomId);
+      setIsMobileViewingChat(true);
+    }
+  }, [urlRoomId, activeRoomId]);
 
   // Fetch all accessible rooms
   const fetchRooms = useCallback(async () => {
@@ -22,40 +45,41 @@ export function ChatPage() {
       const items = res.data.items || [];
       setRooms(items);
       setActiveRoomId((prev) => {
+        if (urlRoomId) return urlRoomId;
         if (prev) return prev;
-        return (items.length > 0 && window.innerWidth >= 768) ? items[0].id : null;
+        return items.length > 0 && window.innerWidth >= 768 ? items[0].id : null;
       });
     } catch (err) {
       console.error('Failed to fetch chat rooms:', err);
     } finally {
       setLoadingRooms(false);
     }
-  }, []);
+  }, [urlRoomId]);
 
   useEffect(() => {
     fetchRooms();
   }, [fetchRooms]);
 
-  // Fetch messages when active room changes
+  // Fetch initial messages when active room changes
   const fetchMessages = useCallback(async (roomId) => {
     if (!roomId) return;
     setLoadingMessages(true);
     try {
       const res = await api.get(`/chat/rooms/${roomId}/messages?limit=50`);
-      setMessages(res.data.items || []);
+      const items = res.data.items || [];
+      setMessages(items);
+      setHasMore(res.data.has_more ?? false);
 
       // Mark read if there are messages
-      const msgs = res.data.items || [];
-      if (msgs.length > 0) {
-        const lastMsg = msgs[msgs.length - 1];
+      if (items.length > 0) {
+        const lastMsg = items[items.length - 1];
         api.patch(`/chat/rooms/${roomId}/read`, { message_id: lastMsg.id }).catch(() => {});
-        // Update local room unread count to 0
         setRooms((prev) =>
           prev.map((r) => (r.id === roomId ? { ...r, unread_count: 0 } : r))
         );
       }
     } catch (err) {
-      console.error('Failed to fetch messages:', err);
+      console.error('Failed to load messages:', err);
       toastError('Failed to load messages');
     } finally {
       setLoadingMessages(false);
@@ -68,12 +92,48 @@ export function ChatPage() {
     }
   }, [activeRoomId, fetchMessages]);
 
+  // Cursor-based infinite scroll for older messages
+  const loadMoreMessages = useCallback(async () => {
+    if (!activeRoomId || loadingMore || !hasMore || messages.length === 0) return;
+    const oldestMessage = messages[0];
+    if (!oldestMessage?.id) return;
+
+    setLoadingMore(true);
+    try {
+      const res = await api.get(
+        `/chat/rooms/${activeRoomId}/messages?limit=30&before_id=${oldestMessage.id}`
+      );
+      const older = res.data.items || [];
+      setHasMore(res.data.has_more ?? false);
+
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const filteredOlder = older.filter((m) => !existingIds.has(m.id));
+        return [...filteredOlder, ...prev];
+      });
+    } catch (err) {
+      console.error('Failed to load older messages:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [activeRoomId, loadingMore, hasMore, messages]);
+
   // Handle incoming real-time WS message
   const handleIncomingMessage = useCallback(
     (newMsg) => {
       if (newMsg.room_id === activeRoomId) {
         setMessages((prev) => {
-          if (prev.some((m) => m.id === newMsg.id)) return prev;
+          // Deduplicate / replace optimistic message by client_id or server id
+          const idx = prev.findIndex(
+            (m) =>
+              (newMsg.client_id && m.client_id === newMsg.client_id) ||
+              m.id === newMsg.id
+          );
+          if (idx !== -1) {
+            const copy = [...prev];
+            copy[idx] = newMsg;
+            return copy;
+          }
           return [...prev, newMsg];
         });
         api.patch(`/chat/rooms/${activeRoomId}/read`, { message_id: newMsg.id }).catch(() => {});
@@ -85,9 +145,9 @@ export function ChatPage() {
             return {
               ...r,
               last_message: newMsg.message,
-              last_message_sender: newMsg.sender.name,
+              last_message_sender: newMsg.sender?.name,
               last_message_at: newMsg.created_at,
-              unread_count: r.id === activeRoomId ? 0 : r.unread_count + 1,
+              unread_count: r.id === activeRoomId ? 0 : (r.unread_count || 0) + 1,
             };
           }
           return r;
@@ -97,111 +157,245 @@ export function ChatPage() {
     [activeRoomId]
   );
 
-  // Real-time WebSocket hook
+  // Handle message delivery/read status updates
+  const handleMessageStatus = useCallback((statusData) => {
+    const { message_id, client_id, status } = statusData;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (
+          (message_id && m.id === message_id) ||
+          (client_id && m.client_id === client_id)
+        ) {
+          return { ...m, status };
+        }
+        return m;
+      })
+    );
+  }, []);
+
+  // Handle read receipt
+  const handleReadReceipt = useCallback((receiptData) => {
+    const { message_id } = receiptData;
+    if (message_id) {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === message_id ? { ...m, status: 'read' } : m))
+      );
+    }
+  }, []);
+
+  // Handle deleted messages
+  const handleWsMessageDeleted = useCallback((delData) => {
+    const { message_id } = delData;
+    if (message_id) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === message_id ? { ...m, is_deleted: true, message: '[Message deleted]' } : m
+        )
+      );
+    }
+  }, []);
+
+  // Real-time WebSocket hook with stable callbacks
   const {
     onlineUsers,
     typingUsers,
     sendTyping: wsSendTyping,
   } = useChatWebSocket(activeRoomId, {
     onMessage: handleIncomingMessage,
+    onMessageStatus: handleMessageStatus,
+    onReadReceipt: handleReadReceipt,
+    onMessageDeleted: handleWsMessageDeleted,
   });
 
   // Action handlers
-  const handleSendMessage = useCallback(async (text) => {
-    if (!activeRoomId || !text.trim()) return;
-    try {
-      const res = await api.post(`/chat/rooms/${activeRoomId}/messages`, { message: text.trim() });
-      const savedMsg = res.data;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === savedMsg.id)) return prev;
-        return [...prev, savedMsg];
-      });
-      setRooms((prev) =>
-        prev.map((r) =>
-          r.id === activeRoomId
-            ? {
-                ...r,
-                last_message: savedMsg.message,
-                last_message_sender: savedMsg.sender.name,
-                last_message_at: savedMsg.created_at,
-              }
-            : r
-        )
-      );
-    } catch (err) {
-      console.error('Failed to send message:', err);
-      toastError('Failed to send message');
-    }
-  }, [activeRoomId, toastError]);
+  const handleSendMessage = useCallback(
+    async (text) => {
+      if (!activeRoomId || !text.trim()) return;
+      const trimmed = text.trim();
+      const clientId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-  const handleUploadAttachment = useCallback(async (file) => {
-    if (!activeRoomId || !file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    try {
-      const res = await api.post(`/chat/rooms/${activeRoomId}/attachment`, formData);
-      const savedMsg = res.data;
-      setMessages((prev) => [...prev, savedMsg]);
-      toastSuccess('Attachment uploaded and sent');
-    } catch (err) {
-      console.error('Failed to upload attachment:', err);
-      toastError('Failed to upload file');
-    }
-  }, [activeRoomId, toastError, toastSuccess]);
+      // Optimistic message
+      const optimisticMsg = {
+        id: clientId,
+        client_id: clientId,
+        room_id: activeRoomId,
+        sender: {
+          id: user?.id,
+          name: user?.name || 'You',
+          role: user?.role || 'user',
+        },
+        message: trimmed,
+        attachment_type: null,
+        attachment_reference: null,
+        attachment_filename: null,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        is_deleted: false,
+      };
 
-  const handleShareResume = useCallback(async (resumeId) => {
-    if (!activeRoomId || !resumeId) return;
-    try {
-      const res = await api.post(`/chat/rooms/${activeRoomId}/share-resume`, { resume_id: resumeId });
-      const savedMsg = res.data;
-      setMessages((prev) => [...prev, savedMsg]);
-      toastSuccess('Resume shared to chat');
-    } catch (err) {
-      console.error('Failed to share resume:', err);
-      toastError('Failed to share resume');
-    }
-  }, [activeRoomId, toastError, toastSuccess]);
+      setMessages((prev) => [...prev, optimisticMsg]);
 
-  const handleDeleteMessage = useCallback(async (messageId) => {
+      try {
+        const res = await api.post(`/chat/rooms/${activeRoomId}/messages`, {
+          message: trimmed,
+          client_id: clientId,
+        });
+        const savedMsg = res.data;
+        setMessages((prev) =>
+          prev.map((m) => (m.client_id === clientId || m.id === savedMsg.id ? savedMsg : m))
+        );
+        setRooms((prev) =>
+          prev.map((r) =>
+            r.id === activeRoomId
+              ? {
+                  ...r,
+                  last_message: savedMsg.message,
+                  last_message_sender: savedMsg.sender.name,
+                  last_message_at: savedMsg.created_at,
+                }
+              : r
+          )
+        );
+      } catch (err) {
+        console.error('Failed to send message:', err);
+        toastError('Failed to send message');
+        setMessages((prev) => prev.filter((m) => m.client_id !== clientId));
+      }
+    },
+    [activeRoomId, user, toastError]
+  );
+
+  const handleUploadAttachment = useCallback(
+    async (file) => {
+      if (!activeRoomId || !file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        const res = await api.post(`/chat/rooms/${activeRoomId}/attachment`, formData);
+        const savedMsg = res.data;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === savedMsg.id)) return prev;
+          return [...prev, savedMsg];
+        });
+        toastSuccess('Attachment uploaded and sent');
+      } catch (err) {
+        console.error('Failed to upload attachment:', err);
+        toastError('Failed to upload file');
+      }
+    },
+    [activeRoomId, toastError, toastSuccess]
+  );
+
+  const handleShareResume = useCallback(
+    async (resumeId) => {
+      if (!activeRoomId || !resumeId) return;
+      try {
+        const res = await api.post(`/chat/rooms/${activeRoomId}/share-resume`, {
+          resume_id: resumeId,
+        });
+        const savedMsg = res.data;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === savedMsg.id)) return prev;
+          return [...prev, savedMsg];
+        });
+        toastSuccess('Resume shared to chat');
+      } catch (err) {
+        console.error('Failed to share resume:', err);
+        toastError('Failed to share resume');
+      }
+    },
+    [activeRoomId, toastError, toastSuccess]
+  );
+
+  const handleDeleteMessage = useCallback(
+    async (messageId) => {
+      try {
+        await api.delete(`/chat/messages/${messageId}`);
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, is_deleted: true, message: '[Message deleted]' } : m
+          )
+        );
+        toastSuccess('Message deleted');
+      } catch (err) {
+        console.error('Failed to delete message:', err);
+        toastError('Failed to delete message');
+      }
+    },
+    [toastError, toastSuccess]
+  );
+
+  const handleEnablePush = useCallback(async () => {
+    setEnablingPush(true);
     try {
-      await api.delete(`/chat/messages/${messageId}`);
-      setMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, is_deleted: true, message: '[Message deleted]' } : m))
-      );
-      toastSuccess('Message deleted');
+      const res = await subscribeToPushNotifications();
+      if (res?.success) {
+        setPushPermission('granted');
+        toastSuccess('Browser push notifications enabled!');
+      } else {
+        setPushPermission(res?.permission || 'denied');
+        if (res?.permission === 'denied') {
+          toastError('Push notifications were blocked in browser settings.');
+        }
+      }
     } catch (err) {
-      console.error('Failed to delete message:', err);
-      toastError('Failed to delete message');
+      console.error('Failed to subscribe to push:', err);
+      toastError(err.message || 'Failed to enable push notifications');
+    } finally {
+      setEnablingPush(false);
     }
-  }, [toastError, toastSuccess]);
+  }, [toastSuccess, toastError]);
 
   const handleSelectRoom = useCallback((roomId) => {
     setActiveRoomId(roomId);
     setIsMobileViewingChat(true);
-  }, []);
+    navigate(`/chats/${roomId}`, { replace: true });
+  }, [navigate]);
 
   const activeRoom = useMemo(() => {
     return rooms.find((r) => r.id === activeRoomId) || null;
   }, [rooms, activeRoomId]);
 
   return (
-    <div className="h-[calc(100vh-100px)] sm:h-[calc(100vh-130px)] min-h-[480px] flex rounded-2xl sm:rounded-3xl overflow-hidden border border-[#CBD5E1] shadow-xl bg-white relative">
-      {/* Left Panel: Service Client Rooms */}
-      <div
-        className={cn(
-          'w-full md:w-[320px] lg:w-[350px] shrink-0 h-full',
-          isMobileViewingChat ? 'hidden md:flex' : 'flex'
-        )}
-      >
-        <ChatRoomList
-          rooms={rooms}
-          activeRoomId={activeRoomId}
-          onSelectRoom={handleSelectRoom}
-          loading={loadingRooms}
-        />
-      </div>
+    <div className="flex flex-col h-[calc(100vh-100px)] sm:h-[calc(100vh-130px)] min-h-[480px]">
+      {/* Optional Push Notification Permission Prompt Banner */}
+      {isPushNotificationSupported() && pushPermission === 'default' && (
+        <div className="mb-2.5 px-4 py-2 bg-gradient-to-r from-blue-600/10 via-indigo-600/10 to-blue-600/10 border border-blue-200/80 rounded-xl flex items-center justify-between text-xs text-blue-900 shadow-sm animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <span className="p-1 rounded-md bg-blue-600 text-white">
+              <Bell className="w-3.5 h-3.5" />
+            </span>
+            <span>
+              <strong>Never miss a client message:</strong> Enable browser push notifications to get alerts even when this tab is closed.
+            </span>
+          </div>
+          <button
+            onClick={handleEnablePush}
+            disabled={enablingPush}
+            className="ml-3 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors shadow-sm text-xs shrink-0 cursor-pointer disabled:opacity-50"
+          >
+            {enablingPush ? 'Enabling...' : 'Enable Notifications'}
+          </button>
+        </div>
+      )}
 
-      {/* Right Panel: Conversation Canvas (WhatsApp Mobile Style) */}
+      <div className="flex-1 flex rounded-2xl sm:rounded-3xl overflow-hidden border border-[#CBD5E1] shadow-xl bg-white relative">
+        {/* Left Panel: Service Client Rooms */}
+        <div
+          className={cn(
+            'w-full md:w-[320px] lg:w-[350px] shrink-0 h-full',
+            isMobileViewingChat ? 'hidden md:flex' : 'flex'
+          )}
+        >
+          <ChatRoomList
+            rooms={rooms}
+            activeRoomId={activeRoomId}
+            onSelectRoom={handleSelectRoom}
+            loading={loadingRooms}
+          />
+        </div>
+
+      {/* Right Panel: Conversation Canvas */}
       <div
         className={cn(
           'flex-1 h-full min-w-0',
@@ -213,6 +407,9 @@ export function ChatPage() {
           messages={messages}
           onlineUsers={onlineUsers}
           typingUsers={typingUsers}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMoreMessages={loadMoreMessages}
           onSendMessage={handleSendMessage}
           onUploadAttachment={handleUploadAttachment}
           onShareResume={handleShareResume}
@@ -223,7 +420,9 @@ export function ChatPage() {
         />
       </div>
     </div>
+  </div>
   );
 }
 
 export default ChatPage;
+

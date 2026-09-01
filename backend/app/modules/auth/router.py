@@ -9,24 +9,52 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.core.security import create_access_token, create_refresh_token, decode_token
-from app.modules.auth.schemas import AuthResponse, LoginRequest, RefreshResponse, UserResponse
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    revoke_token,
+)
+from app.modules.auth.schemas import (
+    AuthResponse,
+    LoginRequest,
+    RefreshResponse,
+    UserResponse,
+)
 from app.modules.auth.service import authenticate_user, log_activity
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _set_auth_cookies(response: Response, user) -> None:
+def _is_request_https(request: Request | None = None) -> bool:
+    """Check whether the incoming request or configured frontend URL uses HTTPS."""
+    if request:
+        proto = request.headers.get("x-forwarded-proto", "").lower()
+        if proto == "https" or request.url.scheme == "https":
+            return True
+        origin = request.headers.get("origin", "").lower()
+        if origin.startswith("https://"):
+            return True
+        referer = request.headers.get("referer", "").lower()
+        if referer.startswith("https://"):
+            return True
+    return settings.frontend_url.startswith("https://")
+
+
+def _set_auth_cookies(response: Response, user, request: Request | None = None) -> None:
     """Set access and refresh tokens as HTTP-only cookies."""
     access_token = create_access_token(user.id, user.role)
     refresh_token = create_refresh_token(user.id, user.role)
+
+    is_secure = _is_request_https(request)
+    samesite = "none" if is_secure else "lax"
 
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=is_secure,
+        samesite=samesite,
         path="/",
         max_age=settings.access_token_expire_minutes * 60,
     )
@@ -34,22 +62,25 @@ def _set_auth_cookies(response: Response, user) -> None:
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,
-        samesite="none",
+        secure=is_secure,
+        samesite=samesite,
         path="/",
         max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
     )
 
 
-import time
 import asyncio
-from app.core.dependencies import _user_cache
+import time
+
+from app.core.dependencies import _user_cache, invalidate_user_cache
 from app.modules.dashboard.service import warm_user_dashboard
+
 
 @router.post("/login", response_model=AuthResponse)
 async def login(
     body: LoginRequest,
     response: Response,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticate user, set JWT cookies, cache user, and pre-warm dashboard in background."""
@@ -60,7 +91,7 @@ async def login(
             detail="Invalid email or password",
         )
 
-    _set_auth_cookies(response, user)
+    _set_auth_cookies(response, user, request)
     await log_activity(db, user.id, "login")
 
     # Immediate cache population & background dashboard pre-warming
@@ -104,12 +135,14 @@ async def refresh_token(
         )
 
     from uuid import UUID
+
     from sqlalchemy import select
+
     from app.modules.users.models import User
 
     user_id = payload.get("sub")
     result = await db.execute(
-        select(User).where(User.id == UUID(user_id), User.is_active == True)  # noqa: E712
+        select(User).where(User.id == UUID(user_id), User.is_active == True)
     )
     user = result.scalar_one_or_none()
     if not user:
@@ -118,15 +151,36 @@ async def refresh_token(
             detail="User not found",
         )
 
-    _set_auth_cookies(response, user)
+    _set_auth_cookies(response, user, request)
     return RefreshResponse()
 
 
 @router.post("/logout")
-async def logout(response: Response):
-    """Clear auth cookies."""
-    response.delete_cookie("access_token", path="/", secure=True, samesite="none", httponly=True)
-    response.delete_cookie("refresh_token", path="/", secure=True, samesite="none", httponly=True)
+async def logout(request: Request, response: Response):
+    """Clear auth cookies and revoke active tokens so a stale refresh cookie cannot re-login the user."""
+    access_token = request.cookies.get("access_token")
+    refresh_token = request.cookies.get("refresh_token")
+
+    if not access_token:
+        auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            access_token = auth_header[7:].strip()
+
+    for tok in (access_token, refresh_token):
+        if tok:
+            revoke_token(tok)
+            try:
+                payload = decode_token(tok)
+                if payload and payload.get("sub"):
+                    invalidate_user_cache(payload["sub"])
+            except Exception:
+                pass
+
+    # Clear cookies across all possible SameSite and Secure combinations
+    for secure, samesite in [(True, "none"), (False, "lax")]:
+        response.delete_cookie("access_token", path="/", secure=secure, samesite=samesite, httponly=True)
+        response.delete_cookie("refresh_token", path="/", secure=secure, samesite=samesite, httponly=True)
+
     return {"message": "Logged out"}
 
 
@@ -146,9 +200,13 @@ async def get_app_bootstrap(
     Returns user profile, dashboard telemetry, notification items, and chat unread count
     in 1 single ultra-fast roundtrip.
     """
-    from app.modules.dashboard.service import get_admin_dashboard_home, get_employee_dashboard_home, get_client_dashboard_home
-    from app.modules.notifications.service import get_user_notifications
     from app.modules.chat.service import get_total_unread
+    from app.modules.dashboard.service import (
+        get_admin_dashboard_home,
+        get_client_dashboard_home,
+        get_employee_dashboard_home,
+    )
+    from app.modules.notifications.service import get_user_notifications
 
     async def fetch_dash():
         if current_user.role in ("admin", "sub_admin"):

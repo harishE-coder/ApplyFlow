@@ -1,33 +1,31 @@
-import asyncio
 import uuid
-from datetime import date, datetime, timezone
-from sqlalchemy import select, delete, func, and_, or_, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import timedelta
+
 from fastapi import HTTPException, status
+from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.modules.users.models import User, SubAdminAssignment
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
-from app.modules.targets.models import Target
-from app.modules.attendance.models import Attendance
-from app.modules.chat.models import ChatMessage
 from app.modules.activity_logs.models import ActivityLog
+from app.modules.applications.models import Application
+from app.modules.clients.models import Client, EmployeeClient
+from app.modules.requirements.models import Requirement
+from app.modules.resumes.models import Resume
+from app.modules.targets.models import Target
+from app.modules.users.models import SubAdminAssignment, User
 from app.modules.users.schemas import (
-    UserCreate,
-    UserUpdate,
-    UserDetailResponse,
     AssignedClientInfo,
     AssignedEmployeeInfo,
     EmployeePerformance,
-    SubAdminCreate,
-    SubAdminUpdate,
-    SubAdminResponse,
-    SubAdminAssignmentRequest,
     SubAdminAssignmentDetails,
+    SubAdminAssignmentRequest,
+    SubAdminCreate,
+    SubAdminResponse,
+    SubAdminUpdate,
+    UserCreate,
+    UserDetailResponse,
+    UserUpdate,
 )
-
 
 # ---------------------------------------------------------------------------
 # Scope resolution helpers
@@ -39,14 +37,14 @@ async def get_sub_admin_client_ids(db: AsyncSession, sub_admin_id: uuid.UUID) ->
     q1 = select(SubAdminAssignment.client_id).where(
         SubAdminAssignment.sub_admin_id == sub_admin_id,
         SubAdminAssignment.client_id.isnot(None),
-        SubAdminAssignment.active == True,  # noqa: E712
+        SubAdminAssignment.active == True,
     )
     assigned_ids = (await db.execute(q1)).scalars().all()
 
     # 2. Clients created/managed by sub_admin
     q2 = select(Client.id).where(
         Client.managed_by == sub_admin_id,
-        Client.is_active == True,  # noqa: E712
+        Client.is_active == True,
     )
     created_ids = (await db.execute(q2)).scalars().all()
 
@@ -59,7 +57,7 @@ async def get_sub_admin_employee_ids(db: AsyncSession, sub_admin_id: uuid.UUID) 
     q1 = select(SubAdminAssignment.employee_id).where(
         SubAdminAssignment.sub_admin_id == sub_admin_id,
         SubAdminAssignment.employee_id.isnot(None),
-        SubAdminAssignment.active == True,  # noqa: E712
+        SubAdminAssignment.active == True,
     )
     assigned_ids = (await db.execute(q1)).scalars().all()
 
@@ -83,7 +81,7 @@ async def get_allowed_client_ids_for_user(db: AsyncSession, user: User) -> list[
         result = await db.execute(
             select(EmployeeClient.client_id).where(
                 EmployeeClient.employee_id == user.id,
-                EmployeeClient.active == True,  # noqa: E712
+                EmployeeClient.active == True,
             )
         )
         return list(result.scalars().all())
@@ -139,7 +137,7 @@ async def get_users(
         client_query = (
             select(EmployeeClient.employee_id, Client.id, Client.company_name)
             .join(Client, EmployeeClient.client_id == Client.id)
-            .where(EmployeeClient.employee_id.in_(emp_ids), EmployeeClient.active == True)  # noqa: E712
+            .where(EmployeeClient.employee_id.in_(emp_ids), EmployeeClient.active == True)
         )
         client_res = await db.execute(client_query)
         for emp_id, cid, cname in client_res.all():
@@ -416,19 +414,32 @@ async def safe_delete_user(db: AsyncSession, user_id: uuid.UUID, current_user: U
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Check dependencies
-    res_count = (await db.execute(select(func.count(Resume.id)).where(Resume.uploaded_by == user_id))).scalar() or 0
-    app_count = (await db.execute(select(func.count(Application.id)).where(Application.employee_id == user_id))).scalar() or 0
-    target_count = (await db.execute(select(func.count(Target.id)).where(Target.employee_id == user_id))).scalar() or 0
-    attendance_count = (await db.execute(select(func.count(Attendance.id)).where(Attendance.employee_id == user_id))).scalar() or 0
-    chat_count = (await db.execute(select(func.count(ChatMessage.id)).where(ChatMessage.sender_id == user_id))).scalar() or 0
+    # Check for active assignments that require explicit reassignment
+    req_count = (await db.execute(
+        select(func.count(Requirement.id)).where(
+            Requirement.assigned_employee_id == user_id,
+            Requirement.status == "active"
+        )
+    )).scalar() or 0
 
-    if res_count > 0 or app_count > 0 or target_count > 0 or attendance_count > 0 or chat_count > 0:
+    managed_count = (await db.execute(
+        select(func.count(User.id)).where(User.managed_by == user_id)
+    )).scalar() or 0
+
+    reasons = []
+    if req_count > 0:
+        reasons.append(f"{req_count} active job opening(s)")
+    if managed_count > 0:
+        reasons.append(f"{managed_count} managed employee(s)")
+
+    if reasons:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This employee has historical records. Deactivate instead.",
+            detail=f"Employee '{user.name}' cannot be deleted because they have {', '.join(reasons)}. Reassign these resources first, or deactivate the employee account instead.",
         )
 
+    # Safe to delete - cascades will handle attendance, notifications, assignments,
+    # while chat messages and activity logs are preserved with sender/user_id = NULL
     await db.execute(delete(EmployeeClient).where(EmployeeClient.employee_id == user_id))
     await db.execute(delete(SubAdminAssignment).where(
         or_(
@@ -455,48 +466,12 @@ async def get_employee_performance_list(
     status_filter: str | None = None,
     date_range: str = "today",
     custom_date: str | None = None,
+    allowed_emp_ids: list[uuid.UUID] | None = None,
 ) -> list[EmployeePerformance]:
     """Get list of employees with real-time performance telemetry dynamically scoped by user role and date filter."""
-    today_date = date.today()
-    filter_d = None
-    num_days = 1
-    start_d = today_date
-    end_d = today_date
+    from app.modules.dashboard.service import _parse_date_filter
 
-    if custom_date and custom_date.strip():
-        try:
-            filter_d = datetime.strptime(custom_date.strip(), "%Y-%m-%d").date()
-            start_d = filter_d
-            end_d = filter_d
-        except Exception:
-            pass
-    elif date_range == "yesterday":
-        filter_d = today_date - timedelta(days=1)
-        start_d = filter_d
-        end_d = filter_d
-    elif date_range in ("last_7_days", "last 7 days", "7d"):
-        start_d = today_date - timedelta(days=6)
-        end_d = today_date
-        num_days = 7
-    elif date_range in ("last_30_days", "last 30 days", "30d"):
-        start_d = today_date - timedelta(days=29)
-        end_d = today_date
-        num_days = 30
-    elif date_range in ("this_week", "this week"):
-        start_d = today_date - timedelta(days=today_date.weekday())
-        end_d = today_date
-        num_days = (today_date - start_d).days + 1
-    elif date_range in ("this_month", "this month"):
-        start_d = today_date.replace(day=1)
-        end_d = today_date
-        num_days = today_date.day
-    else:
-        try:
-            filter_d = datetime.strptime(str(date_range).strip(), "%Y-%m-%d").date()
-            start_d = filter_d
-            end_d = filter_d
-        except Exception:
-            filter_d = today_date
+    start_dt, next_dt, filter_d, num_days = _parse_date_filter(date_range, custom_date)
 
     res_sub = select(Resume.uploaded_by, func.count(Resume.id).label("uploads_cnt")).group_by(Resume.uploaded_by).subquery()
     app_sub = select(Application.employee_id, func.count(Application.id).label("apps_cnt")).group_by(Application.employee_id).subquery()
@@ -508,7 +483,7 @@ async def get_employee_performance_list(
             .where(
                 or_(
                     Resume.resume_date == filter_d,
-                    and_(Resume.resume_date.is_(None), func.date(Resume.upload_date) == filter_d),
+                    and_(Resume.resume_date.is_(None), (Resume.upload_date >= start_dt) & (Resume.upload_date < next_dt)),
                 )
             )
             .group_by(Resume.uploaded_by)
@@ -516,17 +491,19 @@ async def get_employee_performance_list(
         )
         filtered_app_sub = (
             select(Application.employee_id, func.count(Application.id).label("filtered_apps"))
-            .where(func.date(Application.applied_date) == filter_d)
+            .where((Application.applied_date >= start_dt) & (Application.applied_date < next_dt))
             .group_by(Application.employee_id)
             .subquery()
         )
     else:
+        start_d = start_dt.date()
+        end_d = (next_dt - timedelta(days=1)).date()
         filtered_res_sub = (
             select(Resume.uploaded_by, func.count(Resume.id).label("filtered_uploads"))
             .where(
                 or_(
                     (Resume.resume_date >= start_d) & (Resume.resume_date <= end_d),
-                    and_(Resume.resume_date.is_(None), (func.date(Resume.upload_date) >= start_d) & (func.date(Resume.upload_date) <= end_d)),
+                    and_(Resume.resume_date.is_(None), (Resume.upload_date >= start_dt) & (Resume.upload_date < next_dt)),
                 )
             )
             .group_by(Resume.uploaded_by)
@@ -534,7 +511,7 @@ async def get_employee_performance_list(
         )
         filtered_app_sub = (
             select(Application.employee_id, func.count(Application.id).label("filtered_apps"))
-            .where(func.date(Application.applied_date) >= start_d, func.date(Application.applied_date) <= end_d)
+            .where((Application.applied_date >= start_dt) & (Application.applied_date < next_dt))
             .group_by(Application.employee_id)
             .subquery()
         )
@@ -551,7 +528,7 @@ async def get_employee_performance_list(
             func.coalesce(app_sub.c.apps_cnt, 0).label("total_apps"),
             func.coalesce(filtered_res_sub.c.filtered_uploads, 0).label("period_uploads"),
             func.coalesce(filtered_app_sub.c.filtered_apps, 0).label("period_apps"),
-            func.coalesce(tgt_sub.c.target_sum, 25).label("daily_target"),
+            func.coalesce(tgt_sub.c.target_sum, 0).label("daily_target"),
         )
         .outerjoin(res_sub, res_sub.c.uploaded_by == User.id)
         .outerjoin(app_sub, app_sub.c.employee_id == User.id)
@@ -568,7 +545,8 @@ async def get_employee_performance_list(
         query = query.where(User.status != "archived")
 
     if current_user.role == "sub_admin":
-        allowed_emp_ids = await get_sub_admin_employee_ids(db, current_user.id)
+        if allowed_emp_ids is None:
+            allowed_emp_ids = await get_sub_admin_employee_ids(db, current_user.id)
         query = query.where(User.id.in_(allowed_emp_ids))
     elif current_user.role == "employee":
         query = query.where(User.id == current_user.id)
@@ -585,7 +563,7 @@ async def get_employee_performance_list(
     client_query = (
         select(EmployeeClient.employee_id, Client.id, Client.company_name)
         .join(Client, EmployeeClient.client_id == Client.id)
-        .where(EmployeeClient.employee_id.in_(emp_ids), EmployeeClient.active == True)  # noqa: E712
+        .where(EmployeeClient.employee_id.in_(emp_ids), EmployeeClient.active == True)
     )
     client_res = await db.execute(client_query)
     emp_clients_map = {}
@@ -596,10 +574,10 @@ async def get_employee_performance_list(
     for emp in employees:
         assigned = emp_clients_map.get(emp.id, [])
         total_uploads = emp.total_uploads or 0
-        total_apps = emp.total_apps or 0
         period_uploads = emp.period_uploads or 0
-        period_apps = emp.period_apps or 0
-        daily_target = emp.daily_target or 25
+        total_apps = total_uploads  # Project Rule: Total Applications = Total Uploaded Resumes
+        period_apps = period_uploads  # Project Rule: Today's Applications = Uploaded resumes for period
+        daily_target = emp.daily_target or 0
         effective_target = daily_target if filter_d else (daily_target * num_days)
 
         completion_pct = 0.0
@@ -652,8 +630,8 @@ async def get_sub_admins(db: AsyncSession, status_filter: str | None = None) -> 
         .where(
             SubAdminAssignment.sub_admin_id.in_(sa_ids),
             SubAdminAssignment.client_id.is_not(None),
-            SubAdminAssignment.active == True,  # noqa: E712
-            Client.is_active == True,  # noqa: E712
+            SubAdminAssignment.active == True,
+            Client.is_active == True,
         )
     )
     sa_clients_map = {}
@@ -667,8 +645,8 @@ async def get_sub_admins(db: AsyncSession, status_filter: str | None = None) -> 
         .where(
             SubAdminAssignment.sub_admin_id.in_(sa_ids),
             SubAdminAssignment.employee_id.is_not(None),
-            SubAdminAssignment.active == True,  # noqa: E712
-            User.is_active == True,  # noqa: E712
+            SubAdminAssignment.active == True,
+            User.is_active == True,
         )
     )
     sa_emps_map = {}
@@ -758,12 +736,12 @@ async def get_sub_admin_assignment_details(db: AsyncSession, sub_admin_id: uuid.
     assigned_eids = await get_sub_admin_employee_ids(db, sub_admin_id)
 
     all_clients = (await db.execute(
-        select(Client).where(Client.is_active == True).order_by(Client.company_name)  # noqa: E712
+        select(Client).where(Client.is_active == True).order_by(Client.company_name)
     )).scalars().all()
     available_clients = [AssignedClientInfo(id=c.id, company_name=c.company_name) for c in all_clients]
 
     all_emps = (await db.execute(
-        select(User).where(User.role == "employee", User.is_active == True).order_by(User.name)  # noqa: E712
+        select(User).where(User.role == "employee", User.is_active == True).order_by(User.name)
     )).scalars().all()
     available_employees = [AssignedEmployeeInfo(id=e.id, name=e.name, email=e.email) for e in all_emps]
 

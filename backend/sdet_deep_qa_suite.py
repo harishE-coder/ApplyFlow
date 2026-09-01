@@ -19,13 +19,13 @@ Performs real software testing across all 16 phases:
 - Phase 16: Full Regression Verification
 """
 
-import sys
 import os
-import uuid
+import sys
 import time
-import io
+import uuid
+from datetime import date
+
 import requests
-from datetime import date, datetime, timedelta
 
 BASE_URL = "http://localhost:8000"
 
@@ -117,8 +117,8 @@ def run_sdet_suite():
     all_clients = clients_res.json()
     abc_client = next((c for c in all_clients if "ABC" in c["company_name"]), all_clients[0])
     abc_client_id = abc_client["id"]
-    other_client = next((c for c in all_clients if c["id"] != abc_client_id), None)
-    other_client_id = other_client["id"] if other_client else abc_client_id
+    _other_client = next((c for c in all_clients if c["id"] != abc_client_id), None)
+    _other_client_id = _other_client["id"] if _other_client else abc_client_id
 
     mock_pdf = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF"
 
@@ -213,7 +213,7 @@ def run_sdet_suite():
     # 6.1 Admin Search (All Resumes)
     admin_search_res = admin_session.get(f"{BASE_URL}/api/resumes")
     qa.log_test("Phase 6", "Admin Resumes Global Search", admin_search_res.status_code == 200)
-    total_admin_resumes = admin_search_res.json().get("total", 0)
+    _total_admin_resumes = admin_search_res.json().get("total", 0)
 
     # 6.2 Employee Search (Scoped to assigned clients)
     emp_search_res = emp_session.get(f"{BASE_URL}/api/resumes")

@@ -1,16 +1,26 @@
-"""
-Client and EmployeeClient models.
-A Client is our customer who takes recruitment services from Apply Flow (e.g. ABC Staffing, Talent Hub, NextHire).
-Each client can have multiple job requirements for different companies.
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint, Index, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.chat.models import ChatRoom
+    from app.modules.requirements.models import Requirement
+    from app.modules.users.models import User
 
 
 class Client(Base):
@@ -31,7 +41,7 @@ class Client(Base):
 
     # For auto-assignment / hierarchy tracking
     managed_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -42,13 +52,16 @@ class Client(Base):
     )
 
     # Relationships
-    client_users: Mapped[list["User"]] = relationship(  # noqa: F821
+    client_users: Mapped[list[User]] = relationship(
         back_populates="client", lazy="select", foreign_keys="User.client_id"
     )
-    employee_assignments: Mapped[list["EmployeeClient"]] = relationship(
-        back_populates="client", lazy="select", foreign_keys="EmployeeClient.client_id"
+    employee_assignments: Mapped[list[EmployeeClient]] = relationship(
+        back_populates="client", cascade="all, delete-orphan", passive_deletes=True, lazy="select", foreign_keys="EmployeeClient.client_id"
     )
-    requirements: Mapped[list["Requirement"]] = relationship(  # noqa: F821
+    chat_room: Mapped[ChatRoom | None] = relationship(
+        back_populates="client", cascade="all, delete-orphan", passive_deletes=True, uselist=False, lazy="select"
+    )
+    requirements: Mapped[list[Requirement]] = relationship(
         back_populates="client", lazy="select"
     )
 
@@ -72,10 +85,10 @@ class EmployeeClient(Base):
         primary_key=True, default=uuid.uuid4
     )
     employee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     client_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("clients.id"), nullable=False, index=True
+        ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # Granular ownership fields
@@ -89,14 +102,14 @@ class EmployeeClient(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     assigned_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
     # Relationships
-    employee: Mapped["User"] = relationship(  # noqa: F821
+    employee: Mapped[User] = relationship(
         back_populates="employee_assignments", lazy="select", foreign_keys=[employee_id]
     )
-    client: Mapped["Client"] = relationship(
+    client: Mapped[Client] = relationship(
         back_populates="employee_assignments", lazy="select", foreign_keys=[client_id]
     )
 

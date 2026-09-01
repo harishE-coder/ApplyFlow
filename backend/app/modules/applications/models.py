@@ -1,15 +1,29 @@
-"""
-Application, ApplicationEvent, and EmailIntake models.
-Powers the AI Email Intake & Application Timeline system.
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.clients.models import Client
+    from app.modules.requirements.models import Requirement
+    from app.modules.resumes.models import Resume
+    from app.modules.users.models import User
 
 
 class EmailIntake(Base):
@@ -18,11 +32,11 @@ class EmailIntake(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4
     )
-    uploaded_by: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     client_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("clients.id"), nullable=True, index=True
+        ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True
     )
     original_text: Mapped[str] = mapped_column(
         Text, nullable=False
@@ -41,8 +55,8 @@ class EmailIntake(Base):
     )
 
     # Relationships
-    uploader: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
-    client: Mapped["Client"] = relationship(lazy="selectin")  # noqa: F821
+    uploader: Mapped[User | None] = relationship(lazy="selectin")
+    client: Mapped[Client | None] = relationship(lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<EmailIntake id={self.id} source={self.source_type} conf={self.confidence}>"
@@ -60,7 +74,7 @@ class Application(Base):
         primary_key=True, default=uuid.uuid4
     )
     resume_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("resumes.id"), nullable=True, index=True
+        ForeignKey("resumes.id", ondelete="CASCADE"), nullable=True, index=True
     )
     candidate_name: Mapped[str | None] = mapped_column(
         String(200), nullable=True, index=True
@@ -72,13 +86,13 @@ class Application(Base):
         String(200), nullable=True, index=True
     )
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("requirements.id"), nullable=True, index=True
+        ForeignKey("requirements.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    employee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
     client_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("clients.id"), nullable=True, index=True
+        ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True
     )
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="Submitted", index=True
@@ -106,13 +120,14 @@ class Application(Base):
     )
 
     # Relationships
-    resume: Mapped["Resume | None"] = relationship(lazy="selectin")  # noqa: F821
-    requirement: Mapped["Requirement | None"] = relationship(back_populates="applications", lazy="selectin")  # noqa: F821
-    employee: Mapped["User"] = relationship(foreign_keys=[employee_id], lazy="selectin")  # noqa: F821
-    client: Mapped["Client | None"] = relationship(lazy="selectin")  # noqa: F821
-    events: Mapped[list["ApplicationEvent"]] = relationship(
+    resume: Mapped[Resume | None] = relationship(lazy="selectin")
+    requirement: Mapped[Requirement | None] = relationship(back_populates="applications", lazy="selectin")
+    employee: Mapped[User | None] = relationship(foreign_keys=[employee_id], lazy="selectin")
+    client: Mapped[Client | None] = relationship(lazy="selectin")
+    events: Mapped[list[ApplicationEvent]] = relationship(
         back_populates="application",
         cascade="all, delete-orphan",
+        passive_deletes=True,
         lazy="selectin",
         order_by="ApplicationEvent.created_at.asc()",
     )
@@ -158,7 +173,7 @@ class ApplicationEvent(Base):
         DateTime(timezone=True), nullable=True
     )
     email_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("email_intake.id"), nullable=True, index=True
+        ForeignKey("email_intake.id", ondelete="SET NULL"), nullable=True, index=True
     )
     raw_email: Mapped[str | None] = mapped_column(
         Text, nullable=True
@@ -173,16 +188,16 @@ class ApplicationEvent(Base):
         DateTime(timezone=True), nullable=True
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
     # Relationships
-    application: Mapped["Application"] = relationship(back_populates="events", lazy="selectin")
-    creator: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
-    email_intake: Mapped["EmailIntake"] = relationship(lazy="selectin")
+    application: Mapped[Application] = relationship(back_populates="events", lazy="selectin")
+    creator: Mapped[User | None] = relationship(lazy="selectin")
+    email_intake: Mapped[EmailIntake | None] = relationship(lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<ApplicationEvent id={self.id} event={self.event_type} round={self.round_name}>"

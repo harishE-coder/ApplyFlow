@@ -1,6 +1,7 @@
 import uuid
-from pydantic import BaseModel
+
 from app.modules.attendance.schemas import AdminAttendanceSummary
+from pydantic import BaseModel
 
 
 class ChartPoint(BaseModel):
@@ -82,6 +83,13 @@ class TargetSummary(BaseModel):
     completion: int
 
 
+class AIInboxStats(BaseModel):
+    emails_processed: int = 0
+    interview_emails_detected: int = 0
+    pending_review: int = 0
+    upcoming_interviews: int = 0
+
+
 class EmployeeDashboardResponse(BaseModel):
     today_uploads: int
     total_uploads: int
@@ -97,6 +105,8 @@ class EmployeeDashboardResponse(BaseModel):
     completed_today_jobs: int = 0
     high_priority_jobs: int = 0
     recent_completed_jobs: list[dict] = []
+    # AI Inbox Metrics
+    ai_inbox_stats: AIInboxStats = AIInboxStats()
     # Cards & lists
     assigned_clients: list[EmployeeClientCard] = []
     client_requirements: list[RequirementSummaryItem] = []
@@ -127,7 +137,7 @@ class ClientDashboardResponse(BaseModel):
     today_uploads: int  # Resumes uploaded today from resumes table
     interview_updates: int  # Applications with interview updates
     offers_count: int  # Applications with status = 'Offer'
-    joined_count: int = 2
+    joined_count: int = 0
     # Job Openings Task Board Metrics
     active_jobs: int = 0
     completed_jobs: int = 0

@@ -1,15 +1,16 @@
-"""
-User model — supports Admin, Sub-Admin, Employee, and Client roles.
-Uses UUID as primary key internally.
-"""
+from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.clients.models import Client, EmployeeClient
 
 
 class User(Base):
@@ -37,12 +38,12 @@ class User(Base):
 
     # For client-role users: links to their company
     client_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("clients.id"), nullable=True
+        ForeignKey("clients.id", ondelete="SET NULL"), nullable=True
     )
 
     # For auto-assignment / hierarchy tracking
     managed_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -54,11 +55,11 @@ class User(Base):
     )
 
     # Relationships
-    client: Mapped["Client"] = relationship(  # noqa: F821
+    client: Mapped[Client | None] = relationship(
         back_populates="client_users", lazy="selectin", foreign_keys=[client_id]
     )
-    employee_assignments: Mapped[list["EmployeeClient"]] = relationship(  # noqa: F821
-        back_populates="employee", lazy="selectin", foreign_keys="EmployeeClient.employee_id"
+    employee_assignments: Mapped[list[EmployeeClient]] = relationship(
+        back_populates="employee", cascade="all, delete-orphan", passive_deletes=True, lazy="selectin", foreign_keys="EmployeeClient.employee_id"
     )
 
     def __repr__(self) -> str:
@@ -72,13 +73,13 @@ class SubAdminAssignment(Base):
     __tablename__ = "sub_admin_assignments"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    sub_admin_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    employee_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
-    client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id"), nullable=True, index=True)
+    sub_admin_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    employee_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    client_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=True, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships
-    sub_admin: Mapped["User"] = relationship(foreign_keys=[sub_admin_id], lazy="selectin")
-    employee: Mapped["User | None"] = relationship(foreign_keys=[employee_id], lazy="selectin")
-    client: Mapped["Client | None"] = relationship(lazy="selectin")  # noqa: F821
+    sub_admin: Mapped[User] = relationship(foreign_keys=[sub_admin_id], lazy="selectin")
+    employee: Mapped[User | None] = relationship(foreign_keys=[employee_id], lazy="selectin")
+    client: Mapped[Client | None] = relationship(lazy="selectin")

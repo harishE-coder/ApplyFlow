@@ -2,32 +2,26 @@ import asyncio
 import os
 import sys
 from datetime import date, datetime, timedelta
-import uuid
+
 import pytest
 
 # Ensure backend path is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, delete
-
 from app.core.config import settings
-from app.modules.users.models import User
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
-from app.modules.targets.models import Target
-from app.modules.resumes.service import search_resumes
-from app.modules.dashboard.service import (
-    get_admin_overview,
-    get_employee_dashboard,
-    get_client_dashboard,
-    get_employee_target_summary,
-    _parse_date_filter,
-)
-
 from app.core.database import async_session_factory as AsyncSessionLocal
+from app.modules.applications.models import Application
+from app.modules.clients.models import Client, EmployeeClient
+from app.modules.dashboard.service import (
+    _parse_date_filter,
+    get_admin_overview,
+    get_client_dashboard,
+    get_employee_dashboard,
+)
+from app.modules.resumes.models import Resume
+from app.modules.resumes.service import search_resumes
+from app.modules.users.models import User
+from sqlalchemy import select
 
 
 @pytest.mark.anyio
@@ -70,15 +64,15 @@ async def test_global_date_filters_and_pipeline():
 
         # 1. Verify Date Parser
         print("\n--- Test 1: Date Filter Parser Helper ---")
-        st, en, d = _parse_date_filter("today")
+        st, en, d, num_days = _parse_date_filter("today")
         assert d == today_date, f"Expected today date {today_date}, got {d}"
         print(f"✓ Preset 'today' parsed -> {d}")
 
-        st, en, d = _parse_date_filter("yesterday")
+        st, en, d, num_days = _parse_date_filter("yesterday")
         assert d == today_date - timedelta(days=1), f"Expected yesterday date, got {d}"
         print(f"✓ Preset 'yesterday' parsed -> {d}")
 
-        st, en, d = _parse_date_filter("custom", "2026-08-20")
+        st, en, d, num_days = _parse_date_filter("custom", "2026-08-20")
         assert d == test_past_date, f"Expected {test_past_date}, got {d}"
         print(f"✓ Custom date '2026-08-20' parsed -> {d}")
 

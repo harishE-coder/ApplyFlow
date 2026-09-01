@@ -1,12 +1,11 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
-
 from app.core.database import async_session_factory
-from app.modules.clients.schemas import ClientCreate
 from app.modules.clients import service as client_service
+from app.modules.clients.schemas import ClientCreate
 from app.modules.users.models import User
+from sqlalchemy import select
 
 
 @pytest.mark.asyncio

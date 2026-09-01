@@ -3,6 +3,8 @@ FastAPI dependencies for authentication and authorization.
 Reads JWT from HTTP-only cookies (not Authorization header).
 """
 
+import time
+from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -12,10 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import decode_token
 
-
-import time
-
-_user_cache: dict[str, tuple[float, any]] = {}
+_user_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 def invalidate_user_cache(user_id: UUID | str):
     """Invalidate cached user when updated."""
@@ -80,7 +79,7 @@ async def get_current_user(
             _user_cache.pop(str(user_id), None)
 
     result = await db.execute(
-        select(User).where(User.id == UUID(user_id), User.is_active == True)  # noqa: E712
+        select(User).where(User.id == UUID(user_id), User.is_active == True)
     )
     user = result.scalar_one_or_none()
 

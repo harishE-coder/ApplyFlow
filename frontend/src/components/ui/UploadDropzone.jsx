@@ -4,7 +4,7 @@ import { UploadHeroIllustration } from '@/assets/illustrations/ATSIllustrations'
 import { Button } from './Button';
 import { cn } from '@/utils/cn';
 
-export function UploadDropzone({
+export const UploadDropzone = React.memo(function UploadDropzone({
   onFilesSelected,
   accept = '.pdf,application/pdf',
   maxFiles = 50,
@@ -106,6 +106,6 @@ export function UploadDropzone({
       </div>
     </div>
   );
-}
+});
 
 export default UploadDropzone;

@@ -1,37 +1,41 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form
-from pydantic import BaseModel
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, delete
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
-from app.modules.users.models import User
+from app.modules.applications import service
 from app.modules.applications.models import Application
 from app.modules.applications.schemas import (
+    AIAnalysisResponse,
+    AIInboxOverviewResponse,
     ApplicationCreate,
-    ApplicationStatusUpdate,
+    ApplicationListResponse,
     ApplicationNotesUpdate,
     ApplicationResponse,
-    ApplicationListResponse,
-    PipelineStatsResponse,
+    ApplicationStatusUpdate,
     ApplicationTimelineResponse,
+    ConfirmAIRequest,
+    ConfirmSaveRequest,
+    PipelineStatsResponse,
     ProcessEmailRequest,
     ProcessEmailResponse,
-    AIAnalysisResponse,
-    ConfirmSaveRequest,
-    AIInboxOverviewResponse,
-    ConfirmAIRequest,
 )
-from app.modules.applications import service
+from app.modules.users.models import User
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 ai_router = APIRouter(prefix="/api/ai", tags=["ai-inbox"])
-
-
-class ApplicationNotesUpdate(BaseModel):
-    client_notes: str | None = None
-    is_note_shared: bool = True
 
 
 # ============================================================================
@@ -322,9 +326,6 @@ async def delete_application(
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
 
-    from app.modules.applications.models import ApplicationEvent, EmailIntake
-    await db.execute(delete(ApplicationEvent).where(ApplicationEvent.application_id == app_id))
-    await db.execute(delete(EmailIntake).where(EmailIntake.application_id == app_id))
     await db.delete(app)
 
     from app.modules.activity_logs.models import ActivityLog

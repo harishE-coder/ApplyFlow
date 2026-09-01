@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '@/services/api';
+import { initPushNotifications } from '@/services/pushNotifications';
 
 const AuthContext = createContext(null);
 
@@ -10,17 +11,30 @@ export function AuthProvider({ children }) {
   const isLoggingOutRef = useRef(false);
 
   const checkAuth = useCallback(async () => {
-    if (isLoggingOutRef.current) return;
+    // If the user has explicitly logged out, skip bootstrapping until a manual login occurs
+    if (sessionStorage.getItem('applyflow_logged_out') === 'true') {
+      setUser(null);
+      setBootstrapData(null);
+      setIsLoading(false);
+      return null;
+    }
+
+    if (isLoggingOutRef.current) {
+      setIsLoading(false);
+      return null;
+    }
 
     try {
       const response = await api.get('/auth/bootstrap', { cache: false });
-      if (response.data) {
+      if (response.data && response.data.user) {
         setUser(response.data.user || null);
         setBootstrapData({
           dashboard: response.data.dashboard || null,
           notifications: response.data.notifications || null,
           chat_unread: response.data.chat_unread || null,
         });
+        sessionStorage.removeItem('applyflow_logged_out');
+        initPushNotifications();
         return response.data.user;
       }
       setUser(null);
@@ -40,6 +54,7 @@ export function AuthProvider({ children }) {
   }, [checkAuth]);
 
   const login = useCallback(async (email, password) => {
+    sessionStorage.removeItem('applyflow_logged_out');
     const credentials = { email, password };
     await api.post('/auth/login', credentials);
 
@@ -53,27 +68,34 @@ export function AuthProvider({ children }) {
       chat_unread: bootRes.data.chat_unread || null,
     });
 
+    initPushNotifications();
+
     return bootRes.data.user;
   }, []);
 
   const logout = useCallback(async () => {
     isLoggingOutRef.current = true;
-    api.invalidateCache();
+    sessionStorage.setItem('applyflow_logged_out', 'true');
+
+    // Immediately reset user state so UI updates without waiting
     setUser(null);
     setBootstrapData(null);
-
-    document.cookie = 'access_token=; Max-Age=0; path=/; SameSite=None; Secure';
-    document.cookie = 'refresh_token=; Max-Age=0; path=/; SameSite=None; Secure';
-
-    window.location.replace('/login');
+    api.invalidateCache();
 
     try {
       await api.post('/auth/logout');
     } catch (err) {
-      console.error('Logout error:', err);
-    } finally {
-      isLoggingOutRef.current = false;
+      console.warn('Logout API response:', err?.response?.status || err?.message);
     }
+
+    // Clear any accessible cookies across standard SameSite variants
+    document.cookie = 'access_token=; Max-Age=0; path=/; SameSite=Lax';
+    document.cookie = 'refresh_token=; Max-Age=0; path=/; SameSite=Lax';
+    document.cookie = 'access_token=; Max-Age=0; path=/; SameSite=None; Secure';
+    document.cookie = 'refresh_token=; Max-Age=0; path=/; SameSite=None; Secure';
+
+    api.invalidateCache();
+    window.location.replace('/login');
   }, []);
 
   const consumeBootstrapDashboard = useCallback(() => {

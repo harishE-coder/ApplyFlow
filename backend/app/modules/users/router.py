@@ -1,23 +1,24 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
+from app.modules.users import service
 from app.modules.users.models import User
 from app.modules.users.schemas import (
-    UserCreate,
-    UserUpdate,
-    ResetPasswordRequest,
-    UserDetailResponse,
     EmployeePerformance,
-    SubAdminCreate,
-    SubAdminUpdate,
-    SubAdminResponse,
-    SubAdminAssignmentRequest,
+    ResetPasswordRequest,
     SubAdminAssignmentDetails,
+    SubAdminAssignmentRequest,
+    SubAdminCreate,
+    SubAdminResponse,
+    SubAdminUpdate,
+    UserCreate,
+    UserDetailResponse,
+    UserUpdate,
 )
-from app.modules.users import service
 
 router = APIRouter(prefix="/api", tags=["users"])
 

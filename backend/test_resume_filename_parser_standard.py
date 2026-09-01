@@ -3,11 +3,11 @@ Automated Test Suite for ApplyFlow Locked Filename Standard & Parser:
 ServiceClient_Company_RoleOrRoleID_ResumeIdentifier.pdf
 """
 
-import sys
-import uuid
-from app.modules.resumes.parser import parse_resume_filename
-import httpx
 import asyncio
+import uuid
+
+import httpx
+from app.modules.resumes.parser import parse_resume_filename
 
 BASE_URL = "http://localhost:8000"
 
@@ -103,7 +103,7 @@ async def run_e2e_api_tests():
     # 1. Login as Employee
     login_res = await client.post("/api/auth/login", json={"email": "qa_recruiter@applyflow.com", "password": "Recruiter@123"})
     assert login_res.status_code == 200, f"Login failed: {login_res.text}"
-    user_info = login_res.json()["user"]
+    _user_info = login_res.json()["user"]
 
     # 2. Get ABC Staffing Client
     clients_res = await client.get("/api/clients")

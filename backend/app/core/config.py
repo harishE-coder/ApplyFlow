@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     """Apply Flow application settings."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "backend/.env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     database_url_override: str | None = None
     use_sqlite: bool = False
 
+    # Redis / Production Cache
+    redis_url: str | None = None
+
     # JWT
     jwt_secret_key: str = "applyflow-dev-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
@@ -38,21 +41,41 @@ class Settings(BaseSettings):
     google_apps_script_url: str = ""
     google_drive_root_folder_id: str = ""
 
-    # Groq AI
+    # Groq & Multi-Provider AI Gateway Keys
     groq_api_key: str | None = None
+    groq_api_key_1: str | None = Field(default=None, alias="groq_api_key_1")
+    groq_api_key_2: str | None = Field(default=None, alias="groq_api_key_2")
+    groq_api_key_3: str | None = Field(default=None, alias="groq_api_key_3")
+    openai_api_key: str | None = Field(default=None, alias="openai_api_key")
+    gemini_api_key: str | None = Field(default=None, alias="gemini_api_key")
     groq_model: str = "llama-3.3-70b-versatile"
+    openai_model: str = "gpt-4o-mini"
+    gemini_model: str = "gemini-1.5-flash"
+
+    # Supabase Storage (Interview Intelligence Dataset & Models)
+    supabase_url: str | None = "https://ztcmimbnadojqehiocgd.supabase.co"
+    supabase_secret_key: str | None = None
+    supabase_bucket: str = "applyflow-storage"
 
     # CORS
     frontend_url: str = "http://localhost:5173"
 
+    # Web Push (VAPID)
+    vapid_public_key: str | None = Field(default=None, alias="vapid_public_key")
+    vapid_private_key: str | None = Field(default=None, alias="vapid_private_key")
+    vapid_email: str = "mailto:admin@applyflow.com"
+
     # Initial Admin Seed
-    admin_email: str = "Harishabblu123@gmail.com"
+    admin_email: str = "harishabblu@gmail.com"
     admin_password: str = "Harish@2007"
     admin_name: str = "Harish Admin"
 
     @property
     def database_url(self) -> str:
         """Async connection URL for SQLAlchemy asyncpg engine."""
+        if self.use_sqlite:
+            return "sqlite+aiosqlite:///./applyflow.db"
+
         import re
 
         raw = (self.database_url_override or self.database_url_raw or "").strip()
@@ -71,9 +94,6 @@ class Settings(BaseSettings):
                 raw = raw.replace('&', '?', 1)
             return raw
 
-        if self.use_sqlite:
-            return "sqlite+aiosqlite:///./applyflow.db"
-
         return (
             f"postgresql+asyncpg://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -82,6 +102,9 @@ class Settings(BaseSettings):
     @property
     def database_url_sync(self) -> str:
         """Sync URL for Alembic and migration scripts."""
+        if self.use_sqlite:
+            return "sqlite:///./applyflow.db"
+
         import re
 
         raw = (self.database_url_override or self.database_url_raw or "").strip()
@@ -99,9 +122,6 @@ class Settings(BaseSettings):
                 raw = raw.replace('&', '?', 1)
             return raw
 
-        if self.use_sqlite:
-            return "sqlite:///./applyflow.db"
-
         return (
             f"postgresql://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
@@ -109,4 +129,45 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def ensure_vapid_keys() -> None:
+    """
+    Ensures VAPID keys exist. If not configured in environment, generates a valid
+    URL-safe Base64 EC keypair in memory and prints instructions.
+    """
+    if settings.vapid_public_key and settings.vapid_private_key:
+        return
+
+    try:
+        import base64
+
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            NoEncryption,
+            PrivateFormat,
+            PublicFormat,
+        )
+        from py_vapid import Vapid
+
+        v = Vapid()
+        v.generate_keys()
+
+        raw_priv = v.private_key.private_bytes(Encoding.DER, PrivateFormat.PKCS8, NoEncryption())
+        b64_priv = base64.urlsafe_b64encode(raw_priv).rstrip(b"=").decode("utf-8")
+
+        raw_pub = v.public_key.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        b64_pub = base64.urlsafe_b64encode(raw_pub).rstrip(b"=").decode("utf-8")
+
+        settings.vapid_public_key = b64_pub
+        settings.vapid_private_key = b64_priv
+
+        print("\n=== APPLYFLOW AUTO-GENERATED VAPID KEYS ===")
+        print(f"VAPID_PUBLIC_KEY={b64_pub}")
+        print(f"VAPID_PRIVATE_KEY={b64_priv}")
+        print("VAPID_EMAIL=mailto:admin@applyflow.com")
+        print("Save these in backend/.env for persistent production use.\n")
+    except Exception as exc:
+        print(f"⚠️ Note during auto VAPID key generation: {exc}")
+
 

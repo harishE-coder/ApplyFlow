@@ -1,15 +1,26 @@
-"""
-Target model.
-Admin sets daily targets per employee per client.
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.clients.models import Client
+    from app.modules.users.models import User
 
 
 class Target(Base):
@@ -27,10 +38,10 @@ class Target(Base):
         primary_key=True, default=uuid.uuid4
     )
     employee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     client_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("clients.id"), nullable=False, index=True
+        ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True
     )
     daily_target: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(
@@ -44,8 +55,8 @@ class Target(Base):
     )
 
     # Relationships
-    employee: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
-    client: Mapped["Client"] = relationship(lazy="selectin")  # noqa: F821
+    employee: Mapped[User] = relationship(lazy="selectin")
+    client: Mapped[Client] = relationship(lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<Target employee={self.employee_id} client={self.client_id} target={self.daily_target} status={self.status}>"

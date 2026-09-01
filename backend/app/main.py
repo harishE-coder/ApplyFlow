@@ -9,36 +9,53 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import settings
-
-# ---- Import all models so SQLAlchemy registers them ----
-from app.modules.users.models import User, SubAdminAssignment  # noqa: F401
-from app.modules.clients.models import Client, EmployeeClient  # noqa: F401
-from app.modules.requirements.models import Requirement  # noqa: F401
-from app.modules.resumes.models import Resume  # noqa: F401
-from app.modules.applications.models import Application, ApplicationEvent  # noqa: F401
-from app.modules.targets.models import Target  # noqa: F401
+from app.core.config import ensure_vapid_keys, settings
 from app.modules.activity_logs.models import ActivityLog  # noqa: F401
+from app.modules.activity_logs.router import router as activity_logs_router
+from app.modules.applications.models import Application, ApplicationEvent  # noqa: F401
+from app.modules.applications.router import ai_router
+from app.modules.applications.router import router as applications_router
 from app.modules.attendance.models import Attendance  # noqa: F401
-from app.modules.notifications.models import Notification  # noqa: F401
-from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead  # noqa: F401
+from app.modules.attendance.router import router as attendance_router
 
 # ---- Import routers ----
 from app.modules.auth.router import router as auth_router
-from app.modules.users.router import router as users_router
-from app.modules.clients.router import router as clients_router
-from app.modules.requirements.router import router as requirements_router
-from app.modules.resumes.router import router as resumes_router
-from app.modules.applications.router import router as applications_router, ai_router
-from app.modules.targets.router import router as targets_router
-from app.modules.dashboard.router import router as dashboard_router
-from app.modules.reports.router import router as reports_router
-from app.modules.attendance.router import router as attendance_router
-from app.modules.notifications.router import router as notifications_router
-from app.modules.activity_logs.router import router as activity_logs_router
+from app.modules.chat.models import (  # noqa: F401
+    ChatMessage,
+    ChatRead,
+    ChatRoom,
+    PushSubscription,
+)
 from app.modules.chat.router import router as chat_router
 from app.modules.chat.websocket import router as chat_ws_router
+from app.modules.clients.models import Client, EmployeeClient  # noqa: F401
+from app.modules.clients.router import router as clients_router
+from app.modules.dashboard.router import router as dashboard_router
+from app.modules.interview_intelligence.models import (  # noqa: F401
+    EmailTrainingData,
+    InterviewEvent,
+    ModelVersion,
+    TeacherDisagreement,
+)
+from app.modules.interview_intelligence.router import (
+    router as interview_intelligence_router,
+)
+from app.modules.notifications.models import (  # noqa: F401
+    Notification,
+    NotificationPreference,
+)
+from app.modules.notifications.router import router as notifications_router
+from app.modules.reports.router import router as reports_router
+from app.modules.requirements.models import Requirement  # noqa: F401
+from app.modules.requirements.router import router as requirements_router
+from app.modules.resumes.models import Resume  # noqa: F401
+from app.modules.resumes.router import router as resumes_router
+from app.modules.targets.models import Target  # noqa: F401
+from app.modules.targets.router import router as targets_router
 
+# ---- Import all models so SQLAlchemy registers them ----
+from app.modules.users.models import SubAdminAssignment, User  # noqa: F401
+from app.modules.users.router import router as users_router
 
 
 @asynccontextmanager
@@ -46,9 +63,11 @@ async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown events."""
     print("🚀 Apply Flow Careers API starting...")
     import sqlalchemy
-    from app.core.database import engine, Base, warmup_db_pool
+
+    from app.core.database import Base, engine, warmup_db_pool
 
     await warmup_db_pool()
+    ensure_vapid_keys()
 
     if "sqlite" in settings.database_url:
         async with engine.begin() as conn:
@@ -211,10 +230,11 @@ async def lifespan(app: FastAPI):
 
     # Initialize production Super Admin if missing
     try:
-        from app.core.database import async_session_factory
-        from app.modules.users.models import User
-        from app.core.security import hash_password
         from sqlalchemy import select
+
+        from app.core.database import async_session_factory
+        from app.core.security import hash_password
+        from app.modules.users.models import User
 
         async with async_session_factory() as db:
             admin_user = (
@@ -286,10 +306,12 @@ app.include_router(notifications_router)
 app.include_router(activity_logs_router)
 app.include_router(chat_router)
 app.include_router(chat_ws_router)
+app.include_router(interview_intelligence_router)
 
 
 
 
+@app.get("/health")
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""

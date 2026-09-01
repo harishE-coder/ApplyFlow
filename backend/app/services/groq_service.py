@@ -10,13 +10,10 @@ No confidence scores.
 import json
 import logging
 from typing import Any
-import httpx
 
-from app.core.config import settings
+from app.core.ai_gateway import chat_completion
 
 logger = logging.getLogger(__name__)
-
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 SYSTEM_PROMPT = """You are an ATS recruitment email parser and classifier.
 Your FIRST responsibility is to determine whether the email is a genuine recruitment/interview update (INTERVIEW_MAIL) or completely unrelated (NOT_RELATED like marketing, newsletter, billing, OTP, discount, spam, or general meetings).
@@ -49,7 +46,8 @@ class GroqService:
     @classmethod
     async def extract_email_entities(cls, raw_email: str) -> dict[str, Any]:
         """
-        Send raw extracted email text to Groq API with temperature 0.
+        Send raw extracted email text to AI Gateway with temperature 0.
+        Uses centralized multi-key failover and circuit breaking.
         First determines if the email is INTERVIEW_MAIL or NOT_RELATED.
         """
         import re
@@ -58,78 +56,51 @@ class GroqService:
         tag_match = re.search(r'\b(RES[-_]?\d+)\b', raw_email, re.IGNORECASE)
         fallback_tag = tag_match.group(1).upper() if tag_match else None
 
-        api_key = settings.groq_api_key
-
-        models_to_try = [
-            settings.groq_model,
-            "openai/gpt-oss-120b",
-            "llama-3.3-70b-versatile",
-            "qwen/qwen3.6-27b",
-            "openai/gpt-oss-20b",
-            "groq/compound",
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": USER_PROMPT_TEMPLATE.format(email_text=raw_email)},
         ]
-        models_to_try = [m for i, m in enumerate(models_to_try) if m and m not in models_to_try[:i]]
 
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        try:
+            resp_data = await chat_completion(
+                messages=messages,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                max_tokens=500,
+            )
 
-        last_error = None
+            if resp_data and "choices" in resp_data and resp_data["choices"]:
+                content = resp_data["choices"][0]["message"]["content"]
+                parsed = json.loads(content)
 
-        for model in models_to_try:
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": USER_PROMPT_TEMPLATE.format(email_text=raw_email)},
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.0,
-                "max_tokens": 500,
-            }
+                is_interview = bool(parsed.get("is_interview_mail", False))
+                if not is_interview:
+                    return {
+                        "is_interview_mail": False,
+                        "candidate_name": "",
+                        "company": "",
+                        "role": "",
+                        "status": "",
+                        "round": "",
+                        "interview_date": "",
+                        "resume_id_tag": "",
+                    }
 
-            try:
-                async with httpx.AsyncClient(timeout=20.0) as client:
-                    response = await client.post(GROQ_API_URL, headers=headers, json=payload)
-                    if response.status_code == 200:
-                        data = response.json()
-                        content = data["choices"][0]["message"]["content"]
-                        parsed = json.loads(content)
+                extracted_tag = (parsed.get("resume_id_tag") or "").strip() or fallback_tag or ""
 
-                        is_interview = bool(parsed.get("is_interview_mail", False))
-                        if not is_interview:
-                            return {
-                                "is_interview_mail": False,
-                                "candidate_name": "",
-                                "company": "",
-                                "role": "",
-                                "status": "",
-                                "round": "",
-                                "interview_date": "",
-                                "resume_id_tag": "",
-                            }
-
-                        extracted_tag = (parsed.get("resume_id_tag") or "").strip() or fallback_tag or ""
-
-                        return {
-                            "is_interview_mail": True,
-                            "candidate_name": (parsed.get("candidate_name") or "").strip(),
-                            "company": (parsed.get("company") or "").strip(),
-                            "role": (parsed.get("role") or "").strip() or "Software Engineer",
-                            "status": (parsed.get("status") or "Shortlisted").strip() or "Shortlisted",
-                            "round": (parsed.get("round") or "Round 1").strip() or "Round 1",
-                            "interview_date": (parsed.get("interview_date") or "").strip() or None,
-                            "resume_id_tag": extracted_tag,
-                        }
-                    else:
-                        last_error = f"Model {model} returned HTTP {response.status_code}: {response.text}"
-            except Exception as e:
-                last_error = str(e)
-
-        logger.warning(f"Groq API call error ({last_error}). Using fallback classifier.")
+                return {
+                    "is_interview_mail": True,
+                    "candidate_name": (parsed.get("candidate_name") or "").strip(),
+                    "company": (parsed.get("company") or "").strip(),
+                    "role": (parsed.get("role") or "").strip() or "Software Engineer",
+                    "status": (parsed.get("status") or "Shortlisted").strip() or "Shortlisted",
+                    "round": (parsed.get("round") or "Round 1").strip() or "Round 1",
+                    "interview_date": (parsed.get("interview_date") or "").strip() or None,
+                    "resume_id_tag": extracted_tag,
+                }
+        except Exception as e:
+            logger.warning(f"AI Gateway extract error ({e}). Using deterministic keyword fallback.")
         lower = raw_email.lower()
-        recruitment_keywords = ["interview", "shortlist", "candidate", "round", "technical", "offer", "hiring", "cleared", "scheduled"]
         spam_keywords = ["discount", "deal", "newsletter", "invoice", "billing", "otp", "unsubscribe", "sale", "coupon"]
 
         if any(sp in lower for sp in spam_keywords) and not any(rk in lower for rk in ["interview scheduled", "offer letter"]):

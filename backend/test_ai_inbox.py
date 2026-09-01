@@ -13,22 +13,18 @@ import asyncio
 import io
 import time
 import uuid
-from sqlalchemy import select
-from fastapi import UploadFile
-from app.core.database import async_session_factory, engine, Base
-from app.modules.users.models import User
-from app.modules.clients.models import Client
-from app.modules.chat.models import ChatRoom, ChatMessage
-from app.modules.applications.models import Application, ApplicationEvent, EmailIntake
-from app.modules.applications.schemas import ProcessEmailRequest, ConfirmSaveRequest
+
+from app.core.database import async_session_factory
+from app.modules.applications.models import Application
+from app.modules.applications.schemas import ConfirmSaveRequest
 from app.modules.applications.service import (
     analyze_recruiter_email,
     analyze_upload_file,
     confirm_and_save_email,
-    get_application_timeline,
-    get_ai_inbox_feed,
 )
-from app.services.groq_service import GroqService
+from app.modules.users.models import User
+from fastapi import UploadFile
+from sqlalchemy import select
 
 
 async def run_tests():
@@ -225,7 +221,7 @@ Get 50% off on all enterprise AWS cloud servers today. Click here to subscribe n
         img.save(img_buf, format="PNG")
 
         file_img = UploadFile(
-            filename=f"screenshot_interview.png",
+            filename="screenshot_interview.png",
             file=io.BytesIO(img_buf.getvalue()),
             headers={"content-type": "image/png"},
         )

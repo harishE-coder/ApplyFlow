@@ -21,6 +21,7 @@ const ReportsPage = lazy(() => import('@/features/reports/ReportsPage').then((m)
 const NotificationsPage = lazy(() => import('@/features/notifications/NotificationsPage').then((m) => ({ default: m.NotificationsPage })));
 const ChatPage = lazy(() => import('@/features/chat/ChatPage').then((m) => ({ default: m.ChatPage })));
 const PerformanceDashboardPage = lazy(() => import('@/features/admin/PerformanceDashboardPage').then((m) => ({ default: m.PerformanceDashboardPage })));
+const InterviewIntelligencePage = lazy(() => import('@/features/admin/InterviewIntelligencePage').then((m) => ({ default: m.InterviewIntelligencePage })));
 
 function PageSuspenseFallback() {
   return (
@@ -110,6 +111,9 @@ export function App() {
                   <Route path="applications" element={<AIResponseInboxPage />} />
                   <Route path="ai-inbox" element={<AIResponseInboxPage />} />
                   <Route path="chats" element={<ChatPage />} />
+                  <Route path="chats/:roomId" element={<ChatPage />} />
+                  <Route path="chat/:roomId" element={<ChatPage />} />
+                  <Route path="chat" element={<Navigate to="/chats" replace />} />
                   <Route path="requirements" element={<RequirementsPage />} />
                   <Route path="clients" element={<ClientsPage />} />
                   <Route
@@ -140,10 +144,10 @@ export function App() {
                     }
                   />
                   <Route
-                    path="performance"
+                    path="interview-intelligence"
                     element={
-                      <ProtectedRoute allowedRoles={['admin', 'sub_admin']}>
-                        <PerformanceDashboardPage />
+                      <ProtectedRoute allowedRoles={['admin', 'sub_admin', 'employee']}>
+                        <InterviewIntelligencePage />
                       </ProtectedRoute>
                     }
                   />

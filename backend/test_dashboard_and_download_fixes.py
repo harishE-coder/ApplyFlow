@@ -6,21 +6,19 @@ Test Suite: Critical Bug Fixes
 
 import asyncio
 import uuid
-from datetime import date, datetime
-import httpx
-from sqlalchemy import select
+from datetime import date
 
 from app.core.database import async_session_factory
-from app.modules.users.models import User
 from app.modules.clients.models import Client, EmployeeClient
-from app.modules.resumes.models import Resume
 from app.modules.dashboard.service import (
     get_admin_overview,
-    get_employee_dashboard,
     get_client_dashboard,
+    get_employee_dashboard,
 )
-from app.core.security import create_access_token
+from app.modules.resumes.models import Resume
+from app.modules.users.models import User
 from app.services.google_drive import drive_service
+from sqlalchemy import select
 
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -34,7 +32,7 @@ async def run_tests():
         # 1. Fetch test users and client
         admin_user = (await db.execute(select(User).where(User.role == "admin"))).scalars().first()
         emp_user = (await db.execute(select(User).where(User.role == "employee", User.is_active == True))).scalars().first()
-        sub_admin_user = (await db.execute(select(User).where(User.role == "sub_admin", User.is_active == True))).scalars().first()
+        _sub_admin_user = (await db.execute(select(User).where(User.role == "sub_admin", User.is_active == True))).scalars().first()
         client_user = (await db.execute(select(User).where(User.role == "client", User.is_active == True))).scalars().first()
 
         assert admin_user is not None, "Admin user required"
@@ -58,7 +56,7 @@ async def run_tests():
             db.add(EmployeeClient(employee_id=emp_user.id, client_id=client_obj.id, active=True))
             await db.commit()
 
-        print(f"✅ User Contexts Initialized:")
+        print("✅ User Contexts Initialized:")
         print(f"   - Admin: {admin_user.name} ({admin_user.email})")
         print(f"   - Recruiter: {emp_user.name} ({emp_user.email})")
         print(f"   - Client: {client_obj.company_name} (User: {client_user.name})")
@@ -82,7 +80,7 @@ async def run_tests():
         initial_client_applied = pre_client_dash.applied_count
         initial_client_today = pre_client_dash.today_uploads
 
-        print(f"📊 Baseline Counts:", flush=True)
+        print("📊 Baseline Counts:", flush=True)
         print(f"   - Employee: Today={initial_emp_today}, Total={initial_emp_total}", flush=True)
         print(f"   - Admin: Today={initial_admin_today}, Total={initial_admin_total}", flush=True)
         print(f"   - Client: Applied={initial_client_applied}, Today={initial_client_today}", flush=True)
@@ -148,11 +146,11 @@ async def run_tests():
         assert b"<html" not in file_bytes.lower(), "PDF bytes must NOT contain HTML"
         assert b"<!doctype" not in file_bytes.lower(), "PDF bytes must NOT contain HTML DOCTYPE"
 
-        print(f"✅ Raw PDF generated/streamed successfully:")
+        print("✅ Raw PDF generated/streamed successfully:")
         print(f"   - Size: {len(file_bytes)} bytes")
         print(f"   - Header: {file_bytes[:10]}")
         print(f"   - MIME: {mime_type}")
-        print(f"   - HTML Check: Clean (0 HTML tokens found)")
+        print("   - HTML Check: Clean (0 HTML tokens found)")
 
         # Verify synchronous get_file_content wrapper
         sync_bytes, sync_mime = drive_service.get_file_content(

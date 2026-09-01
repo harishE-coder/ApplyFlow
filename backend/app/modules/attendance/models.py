@@ -1,15 +1,15 @@
-"""
-Attendance model.
-Tracks daily work sessions for recruiters with check-in, check-out, and total working hours.
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 
+from app.core.database import Base
 from sqlalchemy import Date, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.database import Base
+if TYPE_CHECKING:
+    from app.modules.users.models import User
 
 
 class Attendance(Base):
@@ -19,7 +19,7 @@ class Attendance(Base):
         primary_key=True, default=uuid.uuid4
     )
     employee_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     work_date: Mapped[date] = mapped_column(
         Date, nullable=False, server_default=func.current_date(), index=True
@@ -35,7 +35,7 @@ class Attendance(Base):
     )
 
     # Relationships
-    employee: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
+    employee: Mapped[User] = relationship(lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<Attendance employee={self.employee_id} date={self.work_date} check_in={self.check_in}>"

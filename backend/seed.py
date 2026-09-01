@@ -4,20 +4,21 @@ Initializes a clean, empty production database with the single Super Admin accou
 """
 
 import asyncio
-from sqlalchemy import create_engine, delete, select
+
 from app.core.config import settings
-from app.core.database import async_session_factory, Base
+from app.core.database import Base, async_session_factory
 from app.core.security import hash_password
-from app.modules.users.models import User, SubAdminAssignment
+from app.modules.activity_logs.models import ActivityLog
+from app.modules.applications.models import Application, ApplicationEvent
+from app.modules.attendance.models import Attendance
+from app.modules.chat.models import ChatMessage, ChatRead, ChatRoom
 from app.modules.clients.models import Client, EmployeeClient
+from app.modules.notifications.models import Notification
 from app.modules.requirements.models import Requirement
 from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application, ApplicationEvent
 from app.modules.targets.models import Target
-from app.modules.activity_logs.models import ActivityLog
-from app.modules.attendance.models import Attendance
-from app.modules.notifications.models import Notification
-from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead
+from app.modules.users.models import SubAdminAssignment, User
+from sqlalchemy import delete
 
 
 async def seed_database():

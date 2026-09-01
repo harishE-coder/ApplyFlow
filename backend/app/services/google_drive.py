@@ -7,11 +7,10 @@ Retains local ./uploads/ storage fallback if Drive is unavailable.
 """
 
 import base64
-import os
 import uuid
 from pathlib import Path
-import httpx
 
+import httpx
 from app.core.config import settings
 
 UPLOAD_DIR = Path("./uploads")

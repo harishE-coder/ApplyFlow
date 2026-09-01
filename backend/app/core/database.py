@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
-from app.core.profiler import record_sql_start, record_sql_end
+from app.core.profiler import record_sql_end, record_sql_start
 
 
 def _create_engine():
@@ -74,22 +74,22 @@ async def warmup_db_pool():
 
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models."""
-    pass
 
 
 # Ensure all models are imported into SQLAlchemy registry
 def _import_all_models():
     try:
+        import app.modules.activity_logs.models
+        import app.modules.applications.models
+        import app.modules.attendance.models
+        import app.modules.chat.models
+        import app.modules.clients.models
+        import app.modules.interview_intelligence.models
+        import app.modules.notifications.models
+        import app.modules.requirements.models
+        import app.modules.resumes.models
+        import app.modules.targets.models
         import app.modules.users.models  # noqa: F401
-        import app.modules.clients.models  # noqa: F401
-        import app.modules.requirements.models  # noqa: F401
-        import app.modules.resumes.models  # noqa: F401
-        import app.modules.applications.models  # noqa: F401
-        import app.modules.targets.models  # noqa: F401
-        import app.modules.attendance.models  # noqa: F401
-        import app.modules.notifications.models  # noqa: F401
-        import app.modules.activity_logs.models  # noqa: F401
-        import app.modules.chat.models  # noqa: F401
     except Exception:
         pass
 

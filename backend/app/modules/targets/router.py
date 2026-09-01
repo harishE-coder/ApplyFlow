@@ -1,16 +1,17 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
-from app.modules.users.models import User
-from app.modules.targets.schemas import (
-    TargetSetRequest,
-    TargetResponse,
-    EmployeeTargetProgressResponse,
-)
 from app.modules.targets import service
+from app.modules.targets.schemas import (
+    EmployeeTargetProgressResponse,
+    TargetResponse,
+    TargetSetRequest,
+)
+from app.modules.users.models import User
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
 

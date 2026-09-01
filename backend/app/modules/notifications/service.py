@@ -1,15 +1,16 @@
 import uuid
-from datetime import datetime, timezone, timedelta
-from sqlalchemy import select, func, update, delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
-
-from app.modules.users.models import User
-from app.modules.notifications.models import Notification
-from app.modules.notifications.schemas import NotificationResponse, NotificationListResponse
-
+from datetime import datetime, timedelta, timezone
 
 from app.core.cache import cache, invalidate_notifications_cache
+from app.modules.notifications.models import Notification
+from app.modules.notifications.schemas import (
+    NotificationListResponse,
+    NotificationResponse,
+)
+from app.modules.users.models import User
+from fastapi import HTTPException
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def create_notification(
@@ -34,7 +35,7 @@ async def create_notification(
 async def get_user_notifications(
     db: AsyncSession, user: User, limit: int = 20
 ) -> NotificationListResponse:
-    cache_key = f"notif:{str(user.id)}:{limit}"
+    cache_key = f"notif:{user.id!s}:{limit}"
     cached = cache.get(cache_key)
     if cached:
         print(f"\033[92m[CACHE HIT] Notifications ({cache_key})\033[0m")

@@ -1,23 +1,26 @@
 import uuid
-from datetime import date, datetime
-from sqlalchemy import select, func, and_, delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException, status
+from datetime import date
 
-from app.modules.users.models import User
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.targets.models import Target
-from app.modules.applications.models import Application
-from app.modules.resumes.models import Resume
+from fastapi import HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.cache import invalidate_dashboard_cache
 from app.modules.activity_logs.models import ActivityLog
+from app.modules.applications.models import Application
+from app.modules.clients.models import Client
+from app.modules.targets.models import Target
 from app.modules.targets.schemas import (
-    TargetSetRequest,
-    TargetResponse,
     ClientTargetProgress,
     EmployeeTargetProgressResponse,
+    TargetResponse,
+    TargetSetRequest,
 )
-from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
-from app.core.cache import invalidate_dashboard_cache
+from app.modules.users.models import User
+from app.modules.users.service import (
+    get_sub_admin_client_ids,
+    get_sub_admin_employee_ids,
+)
 
 
 async def set_target(

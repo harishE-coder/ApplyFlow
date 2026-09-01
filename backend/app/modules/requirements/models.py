@@ -1,15 +1,19 @@
-"""
-Requirement / Job Opening model.
-Represents a recruitment task/job opening requested by a Service Client or Admin.
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.applications.models import Application
+    from app.modules.clients.models import Client
+    from app.modules.resumes.models import Resume
+    from app.modules.users.models import User
 
 
 class Requirement(Base):
@@ -19,7 +23,7 @@ class Requirement(Base):
         primary_key=True, default=uuid.uuid4
     )
     client_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("clients.id"), nullable=False, index=True
+        ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     company: Mapped[str] = mapped_column(
         String(100), nullable=False, index=True
@@ -51,14 +55,14 @@ class Requirement(Base):
         String(20), default="all", nullable=False
     )  # "all" (Global for all employees), "individual"
     assigned_employee_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True, index=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     completed_by: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -69,23 +73,23 @@ class Requirement(Base):
     )
 
     # Relationships
-    client: Mapped["Client"] = relationship(  # noqa: F821
+    client: Mapped[Client] = relationship(
         back_populates="requirements", lazy="selectin"
     )
-    creator: Mapped["User | None"] = relationship(  # noqa: F821
+    creator: Mapped[User | None] = relationship(
         foreign_keys=[created_by], lazy="selectin"
     )
-    completer: Mapped["User | None"] = relationship(  # noqa: F821
+    completer: Mapped[User | None] = relationship(
         foreign_keys=[completed_by], lazy="selectin"
     )
-    assigned_employee: Mapped["User | None"] = relationship(  # noqa: F821
+    assigned_employee: Mapped[User | None] = relationship(
         foreign_keys=[assigned_employee_id], lazy="selectin"
     )
-    resumes: Mapped[list["Resume"]] = relationship(  # noqa: F821
-        back_populates="requirement", lazy="selectin"
+    resumes: Mapped[list[Resume]] = relationship(
+        back_populates="requirement", passive_deletes=True, lazy="selectin"
     )
-    applications: Mapped[list["Application"]] = relationship(  # noqa: F821
-        back_populates="requirement", lazy="selectin"
+    applications: Mapped[list[Application]] = relationship(
+        back_populates="requirement", passive_deletes=True, lazy="selectin"
     )
 
     def __repr__(self) -> str:

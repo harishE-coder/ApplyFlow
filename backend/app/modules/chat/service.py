@@ -1,30 +1,27 @@
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import select, func, or_, and_, desc, text
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException, status, UploadFile
 
-from app.modules.users.models import User, SubAdminAssignment
+from fastapi import HTTPException, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.cache import cache, invalidate_chat_cache
+from app.modules.chat.models import ChatMessage, ChatRead, ChatRoom
+from app.modules.chat.schemas import (
+    ChatMessageResponse,
+    ChatMessagesListResponse,
+    ChatParticipant,
+    ChatRoomResponse,
+    ChatRoomsListResponse,
+    MessageSender,
+    UnreadCountResponse,
+)
 from app.modules.clients.models import Client, EmployeeClient
 from app.modules.resumes.models import Resume
-from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead
-from app.modules.notifications.models import Notification
-from app.modules.chat.schemas import (
-    ChatRoomResponse,
-    ChatParticipant,
-    ChatMessageResponse,
-    MessageSender,
-    ChatRoomsListResponse,
-    ChatMessagesListResponse,
-    UnreadCountResponse,
-    ShareableResumeItem,
-)
 from app.modules.resumes.service import get_allowed_client_ids
-from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
-from app.services.google_drive import drive_service, UPLOAD_DIR
-from app.core.cache import invalidate_chat_cache, cache
+from app.modules.users.models import SubAdminAssignment, User
 
 
 async def check_room_access(db: AsyncSession, user: User, room_id: uuid.UUID) -> ChatRoom:
@@ -67,7 +64,7 @@ async def get_rooms_for_user(db: AsyncSession, user: User) -> ChatRoomsListRespo
     allowed = await get_allowed_client_ids(db, user)
 
     # 1. Fetch accessible active clients
-    client_q = select(Client).where(Client.is_active == True).order_by(Client.company_name)  # noqa: E712
+    client_q = select(Client).where(Client.is_active == True).order_by(Client.company_name)
     if allowed is not None:
         if not allowed:
             return ChatRoomsListResponse(items=[], total_unread=0)
@@ -78,7 +75,6 @@ async def get_rooms_for_user(db: AsyncSession, user: User) -> ChatRoomsListRespo
         return ChatRoomsListResponse(items=[], total_unread=0)
 
     client_ids = [c.id for c in clients]
-    client_map = {c.id: c.company_name for c in clients}
 
     # 2. Get or create chat rooms for each client
     rooms_res = await db.execute(
@@ -191,7 +187,7 @@ async def get_rooms_for_user(db: AsyncSession, user: User) -> ChatRoomsListRespo
                 status=room.status or "active",
                 participants=parts,
                 last_message=last_m.message if last_m else None,
-                last_message_sender=last_m.sender.name if (last_m and last_m.sender) else None,
+                last_message_sender=last_m.sender.name if (last_m and last_m.sender) else ("Deleted User" if last_m else None),
                 last_message_at=last_m.created_at if last_m else None,
                 unread_count=unread,
             )
@@ -218,23 +214,36 @@ async def get_messages(
 
     query = query.order_by(ChatMessage.created_at.desc()).limit(limit + 1)
     count_q = select(func.count(ChatMessage.id)).where(ChatMessage.room_id == room_id)
+    reads_q = select(ChatRead).where(ChatRead.room_id == room_id, ChatRead.user_id != user.id)
 
-    res_data, res_count = await asyncio.gather(
+    res_data, res_count, res_reads = await asyncio.gather(
         db.execute(query),
         db.execute(count_q),
+        db.execute(reads_q),
     )
 
     results = res_data.scalars().all()
     has_more = len(results) > limit
     messages = results[:limit]
+    other_reads = res_reads.scalars().all()
+    max_read_at = max([r.last_read_at for r in other_reads if r.last_read_at], default=None)
 
     items = []
     for msg in reversed(messages):
         sender_info = MessageSender(
             id=msg.sender.id if msg.sender else msg.sender_id,
-            name=msg.sender.name if msg.sender else "User",
-            role=msg.sender.role if msg.sender else "employee",
+            name=msg.sender.name if msg.sender else "Deleted User",
+            role=msg.sender.role if msg.sender else "user",
         )
+        is_own = msg.sender_id == user.id
+        if is_own:
+            if max_read_at and msg.created_at and msg.created_at <= max_read_at:
+                msg_status = "read"
+            else:
+                msg_status = "sent"
+        else:
+            msg_status = "read"
+
         items.append(
             ChatMessageResponse(
                 id=msg.id,
@@ -243,6 +252,7 @@ async def get_messages(
                 message=msg.message,
                 attachment_type=msg.attachment_type,
                 attachment_reference=msg.attachment_reference,
+                status=msg_status,
                 created_at=msg.created_at,
                 edited_at=msg.edited_at,
             )
@@ -260,6 +270,7 @@ async def send_message(
     attachment_type: str | None = None,
     attachment_reference: str | None = None,
     attachment_filename: str | None = None,
+    client_id: str | None = None,
 ) -> ChatMessageResponse:
     room = await check_room_access(db, user, room_id)
 
@@ -317,6 +328,8 @@ async def send_message(
         message=msg.message,
         attachment_type=msg.attachment_type,
         attachment_reference=msg.attachment_reference,
+        client_id=client_id,
+        status="sent",
         created_at=msg.created_at or datetime.now(timezone.utc),
         edited_at=None,
     )
@@ -390,13 +403,13 @@ async def mark_read(
 
 
 async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
-    cache_key = f"chat_unread:{str(user.id)}"
+    cache_key = f"chat_unread:{user.id!s}"
     cached = cache.get(cache_key)
     if cached is not None:
         return UnreadCountResponse(count=cached)
 
     allowed = await get_allowed_client_ids(db, user)
-    client_q = select(ChatRoom.id).join(Client, ChatRoom.client_id == Client.id).where(Client.is_active == True)  # noqa: E712
+    client_q = select(ChatRoom.id).join(Client, ChatRoom.client_id == Client.id).where(Client.is_active == True)
     if allowed is not None:
         if not allowed:
             return UnreadCountResponse(count=0)

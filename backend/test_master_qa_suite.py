@@ -6,13 +6,13 @@ Comprehensive End-to-End Functional, Security, Permission, and Stress Test Suite
 """
 
 import asyncio
-import io
 import json
 import os
 import sys
 import time
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
+
 import httpx
 import websockets
 
@@ -21,16 +21,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from app.core.config import settings
 from app.core.database import async_session_factory
 from app.core.security import hash_password
-from app.modules.users.models import User, SubAdminAssignment  # noqa: F401
-from app.modules.clients.models import Client, EmployeeClient  # noqa: F401
+from app.modules.activity_logs.models import ActivityLog  # noqa: F401
+from app.modules.applications.models import Application, ApplicationEvent  # noqa: F401
+from app.modules.attendance.models import Attendance  # noqa: F401
+from app.modules.chat.models import ChatMessage, ChatRead, ChatRoom  # noqa: F401
+from app.modules.clients.models import Client, EmployeeClient
+from app.modules.notifications.models import Notification  # noqa: F401
 from app.modules.requirements.models import Requirement  # noqa: F401
 from app.modules.resumes.models import Resume  # noqa: F401
-from app.modules.applications.models import Application, ApplicationEvent  # noqa: F401
 from app.modules.targets.models import Target  # noqa: F401
-from app.modules.activity_logs.models import ActivityLog  # noqa: F401
-from app.modules.attendance.models import Attendance  # noqa: F401
-from app.modules.notifications.models import Notification  # noqa: F401
-from app.modules.chat.models import ChatRoom, ChatMessage, ChatRead  # noqa: F401
+from app.modules.users.models import SubAdminAssignment, User
 from sqlalchemy import select
 
 BASE_URL = "http://localhost:8000"

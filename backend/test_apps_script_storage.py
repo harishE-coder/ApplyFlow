@@ -8,10 +8,10 @@ Tests live integration with:
 - Permission verification (Admin cannot upload, Employee can upload)
 """
 
-import sys
 import uuid
-import requests
 from datetime import date
+
+import requests
 
 BASE_URL = "http://localhost:8000"
 

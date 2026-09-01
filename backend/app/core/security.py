@@ -4,12 +4,14 @@ Uses HTTP-only cookies for token transport (more secure than localStorage).
 """
 
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import bcrypt
 from jose import JWTError, jwt
 
 from app.core.config import settings
+
+REVOKED_TOKENS: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ def create_access_token(user_id: UUID, role: str) -> str:
         "role": role,
         "type": "access",
         "exp": expire,
+        "jti": str(uuid4()),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
@@ -57,18 +60,44 @@ def create_refresh_token(user_id: UUID, role: str) -> str:
         "role": role,
         "type": "refresh",
         "exp": expire,
+        "jti": str(uuid4()),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
+def revoke_token(token: str | None) -> None:
+    """Invalidate a token and its JTI so it cannot be reused after logout."""
+    if not token:
+        return
+    REVOKED_TOKENS.add(token)
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_exp": False},
+        )
+        jti = payload.get("jti")
+        if jti:
+            REVOKED_TOKENS.add(jti)
+    except Exception:
+        pass
+
+
 def decode_token(token: str) -> dict | None:
     """Decode and validate a JWT token. Returns payload or None."""
+    if not token or token in REVOKED_TOKENS:
+        return None
+
     try:
         payload = jwt.decode(
             token,
             settings.jwt_secret_key,
             algorithms=[settings.jwt_algorithm],
         )
+        jti = payload.get("jti")
+        if jti and jti in REVOKED_TOKENS:
+            return None
         return payload
     except JWTError:
         return None

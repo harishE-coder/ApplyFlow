@@ -122,7 +122,7 @@ export const AdminCharts = React.memo(function AdminCharts({
 
       {/* Chart 3: Client Performance Comparison (Col span 6) */}
       {!selectedClientId ? (
-        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
+        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4 flex flex-col justify-between h-full">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-h3 font-bold text-[#081226]">
@@ -135,29 +135,33 @@ export const AdminCharts = React.memo(function AdminCharts({
             <span className="text-caption font-bold text-[#0D6EFD]">All Clients View</span>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart layout="vertical" data={clientComparisonData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
-                <XAxis type="number" domain={[0, 120]} stroke="#94A3B8" fontSize={12} unit="%" />
-                <YAxis type="category" dataKey="client" stroke="#94A3B8" fontSize={12} width={100} />
-                <Tooltip
-                  formatter={(val) => [`${val}%`, 'Completion']}
-                  contentStyle={{
-                    backgroundColor: '#081226',
-                    borderRadius: '12px',
-                    border: '1px solid #1E2E4E',
-                    color: '#FFF',
-                  }}
-                />
-                <Bar dataKey="completion" fill="#16A34A" radius={[0, 6, 6, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="h-64 w-full flex items-center justify-center">
+            {clientComparisonData.length === 0 ? (
+              <p className="text-caption text-[#94A3B8]">No active client telemetry to display</p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart layout="vertical" data={clientComparisonData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                  <XAxis type="number" domain={[0, 120]} stroke="#94A3B8" fontSize={12} unit="%" />
+                  <YAxis type="category" dataKey="client" stroke="#94A3B8" fontSize={12} width={100} />
+                  <Tooltip
+                    formatter={(val) => [`${val}%`, 'Completion']}
+                    contentStyle={{
+                      backgroundColor: '#081226',
+                      borderRadius: '12px',
+                      border: '1px solid #1E2E4E',
+                      color: '#FFF',
+                    }}
+                  />
+                  <Bar dataKey="completion" fill="#16A34A" radius={[0, 6, 6, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       ) : (
         /* Client Detail Highlight when specific client is selected */
-        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4">
+        <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4 flex flex-col justify-between h-full">
           <div className="flex items-center justify-between pb-3 border-b border-[#F1F5F9]">
             <div className="flex items-center gap-3">
               <Avatar name={currentClient?.company_name || 'Client'} size="md" variant="blue" />
@@ -192,7 +196,7 @@ export const AdminCharts = React.memo(function AdminCharts({
       )}
 
       {/* Chart 4: Application Status Distribution (Donut / Pie) (Col span 6) */}
-      <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4 flex flex-col justify-between">
+      <div className="lg:col-span-6 bg-white p-6 rounded-2xl border border-[#E2E8F0] shadow-card space-y-4 flex flex-col justify-between h-full">
         <div>
           <h3 className="text-h3 font-bold text-[#081226]">
             4. Application Pipeline Distribution
@@ -203,31 +207,35 @@ export const AdminCharts = React.memo(function AdminCharts({
         </div>
 
         <div className="h-56 w-full flex items-center justify-center">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={statusDistributionData}
-                cx="50%"
-                cy="50%"
-                innerRadius={55}
-                outerRadius={80}
-                paddingAngle={4}
-                dataKey="value"
-              >
-                {statusDistributionData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#081226',
-                  borderRadius: '12px',
-                  border: '1px solid #1E2E4E',
-                  color: '#FFF',
-                }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+          {statusDistributionData.length === 0 ? (
+            <p className="text-caption text-[#94A3B8]">No application statuses recorded yet</p>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={statusDistributionData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={55}
+                  outerRadius={80}
+                  paddingAngle={4}
+                  dataKey="value"
+                >
+                  {statusDistributionData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#081226',
+                    borderRadius: '12px',
+                    border: '1px solid #1E2E4E',
+                    color: '#FFF',
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </div>
 
         {/* Status color legend */}

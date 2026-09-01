@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -29,6 +29,7 @@ import { DateFilter } from '@/components/ui/DateFilter';
 import { ChartSkeleton } from '@/components/ui/ChartSkeleton';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/features/auth/AuthContext';
+import ShiftTimerWidget from './employee/components/ShiftTimerWidget';
 import api from '@/services/api';
 import { formatDate, formatRelativeTime, cn } from '@/utils/cn';
 
@@ -53,10 +54,9 @@ export function EmployeeDashboard() {
   const [dateRange, setDateRange] = useState('today');
   const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
 
-  // Attendance & Live Timer State
+  // Attendance State (Timer is isolated in ShiftTimerWidget)
   const [attendance, setAttendance] = useState(null);
   const [attendanceLoading, setAttendanceLoading] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   // Fetch employee dashboard data
   const fetchData = useCallback(async () => {
@@ -71,96 +71,60 @@ export function EmployeeDashboard() {
         params.date_range = dateRange;
       }
 
-      const results = await Promise.allSettled([
-        api.get('/dashboard/employee/home', { params }),
+      const [dashRes, attRes] = await Promise.all([
+        api.get('/dashboard/employee', { params }),
         api.get('/attendance/status'),
       ]);
 
-      if (results[0].status === 'fulfilled') {
-        const home = results[0].value.data;
-        if (home?.dashboard) {
-          setData(home.dashboard);
-        } else if (home && typeof home === 'object') {
-          setData(home);
-        }
-        if (Array.isArray(home?.assigned_clients)) {
-          setAssignedClients(home.assigned_clients);
-        } else if (Array.isArray(home?.dashboard?.assigned_clients)) {
-          setAssignedClients(home.dashboard.assigned_clients);
-        }
-      } else {
-        const status = results[0].reason?.response?.status;
-        const detail = results[0].reason?.response?.data?.detail || results[0].reason?.message || 'Failed to load recruiter telemetry';
-        console.error('Recruiter Dashboard Telemetry Error:', results[0].reason);
-        if (status !== 401) {
-          toastError('Dashboard Error', detail);
-        }
+      setData(dashRes.data);
+      if (dashRes.data.assigned_clients) {
+        setAssignedClients(dashRes.data.assigned_clients);
       }
-
-      if (results[1].status === 'fulfilled') {
-        setAttendance(results[1].value.data);
-      }
+      setAttendance(attRes.data);
     } catch (err) {
-      if (err.response?.status !== 401) {
-        toastError('Dashboard Error', err.response?.data?.detail || err.message || 'Failed to load recruiter telemetry');
-      }
+      console.error('Failed to load employee dashboard:', err);
     } finally {
       setLoading(false);
     }
-  }, [selectedClientId, dateRange, customDate, toastError]);
+  }, [selectedClientId, dateRange, customDate]);
 
+  const fetchDataRef = useRef(fetchData);
+  useEffect(() => {
+    fetchDataRef.current = fetchData;
+  }, [fetchData]);
+
+  // Initial fetch on mount / filter changes
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Real-time listener with stable ref to prevent re-attaching
-  const fetchDataRef = useRef(fetchData);
-  fetchDataRef.current = fetchData;
-
+  // Live Refresh on Window Events (Debounced on focus)
   useEffect(() => {
+    let focusTimeout = null;
     const handleRefreshEvent = () => {
       fetchDataRef.current();
     };
+    const handleFocusEvent = () => {
+      if (focusTimeout) clearTimeout(focusTimeout);
+      focusTimeout = setTimeout(() => {
+        fetchDataRef.current();
+      }, 500);
+    };
+
     window.addEventListener('resume-uploaded', handleRefreshEvent);
     window.addEventListener('application-created', handleRefreshEvent);
     window.addEventListener('application-updated', handleRefreshEvent);
     window.addEventListener('email-processed', handleRefreshEvent);
-    window.addEventListener('focus', handleRefreshEvent);
+    window.addEventListener('focus', handleFocusEvent);
 
     return () => {
+      if (focusTimeout) clearTimeout(focusTimeout);
       window.removeEventListener('resume-uploaded', handleRefreshEvent);
       window.removeEventListener('application-created', handleRefreshEvent);
       window.removeEventListener('application-updated', handleRefreshEvent);
       window.removeEventListener('email-processed', handleRefreshEvent);
-      window.removeEventListener('focus', handleRefreshEvent);
+      window.removeEventListener('focus', handleFocusEvent);
     };
-  }, []);
-
-  // Live timer for active attendance session
-  useEffect(() => {
-    let interval = null;
-    if (attendance?.is_active && attendance?.check_in) {
-      const startTime = new Date(attendance.check_in).getTime();
-      const updateTimer = () => {
-        const now = Date.now();
-        const diff = Math.max(0, Math.floor((now - startTime) / 1000));
-        setElapsedSeconds(diff);
-      };
-      updateTimer();
-      interval = setInterval(updateTimer, 1000);
-    } else {
-      setElapsedSeconds(0);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [attendance]);
-
-  const formatTimer = useCallback((seconds) => {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   }, []);
 
   // Toggle Attendance
@@ -187,8 +151,6 @@ export function EmployeeDashboard() {
     navigate('/upload', { state: { initialFiles: files, client_id: selectedClientId } });
   }, [navigate, selectedClientId]);
 
-  const todayUploads = data?.today_uploads ?? 0;
-
   // Single Source of Truth: always use the backend-computed target_summary.
   const summary = useMemo(() => {
     return data?.target_summary ?? {
@@ -201,31 +163,9 @@ export function EmployeeDashboard() {
 
   const targetColor = useMemo(() => {
     const completion = summary.completion;
-    if (completion >= 100) {
-      return {
-        hex: '#16A34A',
-        badgeBg: 'bg-[#F0FDF4]',
-        badgeText: 'text-[#16A34A]',
-        badgeBorder: 'border-[#BBF7D0]',
-        variant: 'success',
-      };
-    }
-    if (completion > 50) {
-      return {
-        hex: '#F59E0B',
-        badgeBg: 'bg-[#FFFBEB]',
-        badgeText: 'text-[#D97706]',
-        badgeBorder: 'border-[#FDE68A]',
-        variant: 'orange',
-      };
-    }
-    return {
-      hex: '#EF4444',
-      badgeBg: 'bg-[#FEF2F2]',
-      badgeText: 'text-[#DC2626]',
-      badgeBorder: 'border-[#FECACA]',
-      variant: 'danger',
-    };
+    if (completion >= 100) return { hex: '#16A34A', badgeBg: 'bg-[#F0FDF4]', badgeText: 'text-[#16A34A]', badgeBorder: 'border-[#BBF7D0]', variant: 'success' };
+    if (completion > 50) return { hex: '#F59E0B', badgeBg: 'bg-[#FFFBEB]', badgeText: 'text-[#D97706]', badgeBorder: 'border-[#FDE68A]', variant: 'orange' };
+    return { hex: '#EF4444', badgeBg: 'bg-[#FEF2F2]', badgeText: 'text-[#DC2626]', badgeBorder: 'border-[#FECACA]', variant: 'danger' };
   }, [summary.completion]);
 
   if (loading && !data) {
@@ -276,7 +216,6 @@ export function EmployeeDashboard() {
 
         {/* Filters Row */}
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pt-3 border-t border-[#F1F5F9] items-center">
-          {/* Assigned Clients Selector */}
           <div className="sm:col-span-6">
             <label className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block mb-1">
               Assigned Service Client Filter
@@ -295,7 +234,6 @@ export function EmployeeDashboard() {
             </select>
           </div>
 
-          {/* Global Date Filter */}
           <div className="sm:col-span-6">
             <label className="text-[11px] font-bold uppercase tracking-wider text-[#64748B] block mb-1">
               Global Date Filter
@@ -312,67 +250,35 @@ export function EmployeeDashboard() {
         </div>
       </div>
 
-      {/* Employee Cards Strip (Today's Uploads, Applications Submitted, Daily Target, Completion %) */}
+      {/* Employee Cards Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <KPICard
           title="Today's Uploads"
-          value={todayUploads}
+          value={data?.today_uploads ?? 0}
           subtitle="Resumes in pipeline"
           icon={Upload}
           variant="blue"
         />
-
-        <KPICard
-          title="Applications Submitted"
-          value={summary.submitted}
-          subtitle="Delivered to clients"
-          icon={Briefcase}
-          variant="default"
-        />
-
-        <KPICard
-          title="Daily Target"
-          value={`${summary.submitted} / ${summary.target}`}
-          subtitle={`Target quota: ${summary.target} applications`}
-          icon={Target}
-          variant={targetColor.variant}
-        />
-
-        <KPICard
-          title="Completion %"
-          value={`${summary.completion}%`}
-          subtitle={
-            summary.completion >= 100
-              ? '🎯 100% Target Met!'
-              : `${summary.remaining} more submissions needed`
-          }
-          icon={TrendingUp}
-          variant={targetColor.variant}
-        />
-      </div>
-
-      {/* JOB OPENINGS TASK STRIP */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <KPICard
           title="Active Job Openings"
           value={data?.active_jobs ?? 0}
           subtitle="Assigned recruitment tasks"
           icon={Briefcase}
-          variant="blue"
+          variant="default"
         />
         <KPICard
           title="Completed Today"
           value={data?.completed_today_jobs ?? 0}
-          subtitle="Tasks finished today"
+          subtitle="Positions fulfilled today"
           icon={CheckCircle2}
           variant="success"
         />
         <KPICard
-          title="High Priority Jobs"
+          title="High Priority Openings"
           value={data?.high_priority_jobs ?? 0}
-          subtitle="Immediate submissions needed"
-          icon={Target}
-          variant="orange"
+          subtitle="Urgent client needs"
+          icon={Sparkles}
+          variant="danger"
         />
       </div>
 
@@ -434,28 +340,34 @@ export function EmployeeDashboard() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {(data?.client_requirements || []).slice(0, 4).map((req, idx) => (
-                <div
-                  key={req.id || idx}
-                  onClick={() => navigate(`/candidates?requirement_id=${req.id}`)}
-                  className="p-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC]/50 hover:bg-[#EFF6FF]/40 hover:border-[#0D6EFD]/40 transition-all duration-120 cursor-pointer flex items-center justify-between group"
-                >
-                  <div className="min-w-0">
-                    <p className="text-small font-bold text-[#081226] group-hover:text-[#0D6EFD] truncate">
-                      {req.company} — {req.role}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1 text-caption text-[#64748B]">
-                      <span className="font-mono text-[11px] px-1.5 py-0.2 rounded bg-white border border-[#E2E8F0]">
-                        {req.role_code}
-                      </span>
-                      <span>•</span>
-                      <span>{req.resumes_count || 0} resumes</span>
-                    </div>
-                  </div>
-
-                  <ChevronRight className="w-4 h-4 text-[#94A3B8] group-hover:text-[#0D6EFD] shrink-0 ml-2" />
+              {(data?.client_requirements || []).length === 0 ? (
+                <div className="sm:col-span-2 py-6 text-center text-caption text-[#94A3B8]">
+                  No active job requirements assigned to your account.
                 </div>
-              ))}
+              ) : (
+                (data?.client_requirements || []).slice(0, 4).map((req, idx) => (
+                  <div
+                    key={req.id || idx}
+                    onClick={() => navigate(`/candidates?requirement_id=${req.id}`)}
+                    className="p-4 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC]/50 hover:bg-[#EFF6FF]/40 hover:border-[#0D6EFD]/40 transition-all duration-120 cursor-pointer flex items-center justify-between group"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-small font-bold text-[#081226] group-hover:text-[#0D6EFD] truncate">
+                        {req.company} — {req.role}
+                      </p>
+                      <div className="flex items-center gap-2 mt-1 text-caption text-[#64748B]">
+                        <span className="font-mono text-[11px] px-1.5 py-0.2 rounded bg-white border border-[#E2E8F0]">
+                          {req.role_code}
+                        </span>
+                        <span>•</span>
+                        <span>{req.resumes_count || 0} resumes</span>
+                      </div>
+                    </div>
+
+                    <ChevronRight className="w-4 h-4 text-[#94A3B8] group-hover:text-[#0D6EFD] shrink-0 ml-2" />
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -488,19 +400,27 @@ export function EmployeeDashboard() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-center">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">Emails Processed</p>
-                <p className="text-h2 font-black text-[#081226] mt-0.5">18</p>
+                <p className="text-h2 font-black text-[#081226] mt-0.5">
+                  {data?.ai_inbox_stats?.emails_processed ?? 0}
+                </p>
               </div>
               <div className="p-3.5 rounded-xl bg-[#EFF6FF] border border-[#BFDBFE] text-center">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#2563EB]">New Applications</p>
-                <p className="text-h2 font-black text-[#2563EB] mt-0.5">12</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#2563EB]">Interview Emails</p>
+                <p className="text-h2 font-black text-[#2563EB] mt-0.5">
+                  {data?.ai_inbox_stats?.interview_emails_detected ?? 0}
+                </p>
               </div>
               <div className="p-3.5 rounded-xl bg-[#FFF7ED] border border-[#FFEDD5] text-center">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#F97316]">Pending Review</p>
-                <p className="text-h2 font-black text-[#F97316] mt-0.5">0</p>
+                <p className="text-h2 font-black text-[#F97316] mt-0.5">
+                  {data?.ai_inbox_stats?.pending_review ?? 0}
+                </p>
               </div>
               <div className="p-3.5 rounded-xl bg-[#F0FDF4] border border-[#BBF7D0] text-center">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-[#16A34A]">Upcoming Interviews</p>
-                <p className="text-h2 font-black text-[#16A34A] mt-0.5">5</p>
+                <p className="text-h2 font-black text-[#16A34A] mt-0.5">
+                  {data?.ai_inbox_stats?.upcoming_interviews ?? 0}
+                </p>
               </div>
             </div>
           </div>
@@ -551,71 +471,13 @@ export function EmployeeDashboard() {
             </div>
           </div>
 
-          {/* 2. Attendance Widget with Live Timer */}
-          <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-6 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#F1F5F9]">
-              <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-[#0D6EFD]" />
-                <h4 className="text-small font-bold uppercase tracking-wider text-[#64748B]">
-                  Shift Attendance
-                </h4>
-              </div>
-
-              <span
-                className={cn(
-                  'text-caption font-bold px-2 py-0.5 rounded-full flex items-center gap-1.5',
-                  attendance?.is_active
-                    ? 'bg-[#F0FDF4] text-[#16A34A] border border-[#BBF7D0]'
-                    : 'bg-[#F1F5F9] text-[#64748B] border border-[#E2E8F0]'
-                )}
-              >
-                <span
-                  className={cn(
-                    'w-2 h-2 rounded-full',
-                    attendance?.is_active ? 'bg-[#16A34A] animate-pulse' : 'bg-[#94A3B8]'
-                  )}
-                />
-                {attendance?.is_active ? 'Checked In' : 'Checked Out'}
-              </span>
-            </div>
-
-            {/* Live Timer Display */}
-            {attendance?.is_active ? (
-              <div className="p-4 rounded-xl bg-[#081226] text-white text-center space-y-1">
-                <p className="text-caption font-bold uppercase tracking-widest text-[#94A3B8]">
-                  Active Shift Duration
-                </p>
-                <p className="font-mono text-display font-bold text-[#FF8A00] tracking-wider">
-                  {formatTimer(elapsedSeconds)}
-                </p>
-                <p className="text-caption text-[#94A3B8]">
-                  Started at {attendance.check_in ? formatDate(attendance.check_in) : 'Today'}
-                </p>
-              </div>
-            ) : (
-              <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-center text-[#64748B] text-small">
-                {attendance?.check_out ? (
-                  <p>
-                    Completed shift today. Logged{' '}
-                    <span className="font-bold text-[#081226]">{attendance.total_hours} hrs</span>
-                  </p>
-                ) : (
-                  <p>No active shift. Click below to start your workday.</p>
-                )}
-              </div>
-            )}
-
-            <Button
-              variant={attendance?.is_active ? 'outline' : 'primary'}
-              size="md"
-              icon={attendance?.is_active ? Square : Play}
-              isLoading={attendanceLoading}
-              onClick={handleToggleAttendance}
-              className="w-full h-[44px]"
-            >
-              {attendance?.is_active ? 'End Shift Session' : 'Start Daily Shift (Check In)'}
-            </Button>
-          </div>
+          {/* 2. Attendance Widget with Self-Contained Live Shift Timer */}
+          <ShiftTimerWidget
+            attendance={attendance}
+            attendanceLoading={attendanceLoading}
+            onToggleAttendance={handleToggleAttendance}
+            formatDate={formatDate}
+          />
 
           {/* 3. Recent Activity Feed */}
           <div className="bg-white rounded-2xl border border-[#E2E8F0] shadow-card p-6">
@@ -627,20 +489,22 @@ export function EmployeeDashboard() {
             </div>
 
             <div className="space-y-3">
-              {(data?.recent_activity || [
-                { id: '1', action: 'Uploaded 35 resumes', description: 'Batch ingestion for ABC Staffing', created_at: new Date().toISOString() },
-                { id: '2', action: 'Submitted Rahul to TCS Java', description: 'Candidate delivered to client pipeline', created_at: new Date().toISOString() },
-                { id: '3', action: 'Target Milestone', description: '50% of daily target reached', created_at: new Date().toISOString() },
-              ]).map((act, idx) => (
-                <div key={act.id || idx} className="p-3 rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] flex items-start gap-2.5">
-                  <div className="w-2 h-2 rounded-full bg-[#0D6EFD] mt-1.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-small font-bold text-[#081226] leading-tight">{act.action}</p>
-                    <p className="text-caption text-[#64748B] mt-0.5">{act.description}</p>
-                    <p className="text-[10px] text-[#94A3B8] mt-1">{formatRelativeTime(act.created_at)}</p>
+              {(data?.recent_activity || []).length === 0 ? (
+                <p className="py-4 text-center text-caption text-[#94A3B8]">
+                  No recent candidate activity recorded today.
+                </p>
+              ) : (
+                (data?.recent_activity || []).map((act, idx) => (
+                  <div key={act.id || idx} className="p-3 rounded-xl bg-[#F8FAFC] border border-[#F1F5F9] flex items-start gap-2.5">
+                    <div className="w-2 h-2 rounded-full bg-[#0D6EFD] mt-1.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-small font-bold text-[#081226] leading-tight">{act.action}</p>
+                      <p className="text-caption text-[#64748B] mt-0.5">{act.description}</p>
+                      <p className="text-[10px] text-[#94A3B8] mt-1">{formatRelativeTime(act.created_at)}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         </div>

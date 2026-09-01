@@ -1,10 +1,28 @@
+from __future__ import annotations
+
 import uuid
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.clients.models import Client
+    from app.modules.requirements.models import Requirement
+    from app.modules.users.models import User
 
 
 class Resume(Base):
@@ -32,13 +50,13 @@ class Resume(Base):
     )  # Parsed from filename (e.g., "RES1023")
 
     requirement_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("requirements.id"), nullable=True, index=True
+        ForeignKey("requirements.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    client_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("clients.id"), nullable=False, index=True
+    client_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    uploaded_by: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False, index=True
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     # Google Drive references
@@ -55,9 +73,9 @@ class Resume(Base):
     )
 
     # Relationships
-    requirement: Mapped["Requirement"] = relationship(back_populates="resumes", lazy="selectin")  # noqa: F821
-    client: Mapped["Client"] = relationship(lazy="selectin")  # noqa: F821
-    uploader: Mapped["User"] = relationship(lazy="selectin")  # noqa: F821
+    requirement: Mapped[Requirement | None] = relationship(back_populates="resumes", lazy="selectin")
+    client: Mapped[Client | None] = relationship(lazy="selectin")
+    uploader: Mapped[User | None] = relationship(lazy="selectin")
 
     @property
     def display_id(self) -> str:

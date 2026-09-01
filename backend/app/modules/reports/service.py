@@ -1,15 +1,15 @@
 import io
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.users.models import User
+import pandas as pd
+from app.modules.applications.models import Application
 from app.modules.clients.models import Client
 from app.modules.requirements.models import Requirement
 from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application
-import pandas as pd
+from app.modules.users.models import User
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def generate_excel_report(
@@ -19,7 +19,10 @@ async def generate_excel_report(
     employee_id: uuid.UUID | None = None,
 ) -> bytes:
     """Generate multi-sheet Excel recruitment report matching Customer & Requirements model."""
-    from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
+    from app.modules.users.service import (
+        get_sub_admin_client_ids,
+        get_sub_admin_employee_ids,
+    )
 
     allowed_client_ids = None
     allowed_employee_ids = None
@@ -147,8 +150,14 @@ async def generate_pdf_report(
     """Generate branded PDF recruitment summary report using ReportLab."""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.platypus import (
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -189,7 +198,10 @@ async def generate_pdf_report(
     story.append(Paragraph(f"Generated on: {datetime.now(timezone.utc).strftime('%d %B %Y, %H:%M UTC')} | Confidential Corporate Summary", subtitle_style))
     story.append(Spacer(1, 8))
 
-    from app.modules.users.service import get_sub_admin_client_ids, get_sub_admin_employee_ids
+    from app.modules.users.service import (
+        get_sub_admin_client_ids,
+        get_sub_admin_employee_ids,
+    )
 
     allowed_client_ids = None
     allowed_employee_ids = None

@@ -8,10 +8,9 @@ Comprehensive E2E Automated Test Suite for Daily Target Quota Real-Time Auto-Upd
 """
 
 import asyncio
-import io
-import json
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date
+
 import httpx
 
 BASE_URL = "http://localhost:8000"
@@ -50,7 +49,7 @@ async def run_target_auto_update_test():
         baseline_remaining = baseline_summary["remaining"]
         baseline_completion = baseline_summary["completion"]
 
-        print(f"\n📊 BASELINE METRICS (Today, All Assigned Clients):")
+        print("\n📊 BASELINE METRICS (Today, All Assigned Clients):")
         print(f"   - Today's Uploads:        {baseline_uploads}")
         print(f"   - Applications Submitted: {baseline_submitted}")
         print(f"   - Daily Target Quota:     {baseline_submitted} / {baseline_target}")
@@ -84,7 +83,7 @@ async def run_target_auto_update_test():
         assert upload_res.status_code == 200, f"Upload failed: {upload_res.text}"
         upload_json = upload_res.json()
         assert upload_json["saved_count"] == 3, f"Expected 3 saved, got {upload_json.get('saved_count')}"
-        print(f"  ✅ 3 Resumes uploaded successfully.")
+        print("  ✅ 3 Resumes uploaded successfully.")
 
         # 5. Verify Post-Upload Target Quota (Must immediately reflect +3)
         dash_res_after = await client.get("/api/dashboard/employee?date_range=today")
@@ -97,7 +96,7 @@ async def run_target_auto_update_test():
         post_remaining = post_summary["remaining"]
         post_completion = post_summary["completion"]
 
-        print(f"\n📈 POST-UPLOAD METRICS (After +3 Resume Upload):")
+        print("\n📈 POST-UPLOAD METRICS (After +3 Resume Upload):")
         print(f"   - Today's Uploads:        {post_uploads} (Expected: {baseline_uploads + 3})")
         print(f"   - Applications Submitted: {post_submitted} (Expected: {baseline_submitted + 3})")
         print(f"   - Daily Target Quota:     {post_submitted} / {post_target}")

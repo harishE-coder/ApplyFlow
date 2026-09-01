@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
-from app.modules.users.models import User
-from app.modules.attendance.schemas import AttendanceRecordResponse, AdminAttendanceSummary
 from app.modules.attendance import service
+from app.modules.attendance.schemas import (
+    AdminAttendanceSummary,
+    AttendanceRecordResponse,
+)
+from app.modules.users.models import User
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/attendance", tags=["attendance"])
 
@@ -48,9 +50,14 @@ async def check_out(
     return await service.check_out(db, current_user)
 
 
-@router.get("/admin-summary", response_model=AdminAttendanceSummary, dependencies=[Depends(require_role("admin"))])
+@router.get("/admin-summary", response_model=AdminAttendanceSummary, dependencies=[Depends(require_role("admin", "sub_admin"))])
 async def get_admin_attendance_summary(
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """Admin live attendance summary for today."""
-    return await service.get_admin_attendance_summary(db)
+    """Admin and Sub-Admin live attendance summary for today."""
+    allowed_emp_ids = None
+    if current_user.role == "sub_admin":
+        from app.modules.users.service import get_sub_admin_employee_ids
+        allowed_emp_ids = await get_sub_admin_employee_ids(db, current_user.id)
+    return await service.get_admin_attendance_summary(db, allowed_employee_ids=allowed_emp_ids)

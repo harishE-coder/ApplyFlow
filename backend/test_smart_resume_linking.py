@@ -9,17 +9,19 @@ Tests:
 """
 
 import asyncio
-import uuid
-from datetime import datetime
-from sqlalchemy import select, func
+
 from app.core.database import async_session_factory
-from app.modules.users.models import User
+from app.modules.applications.models import Application
+from app.modules.applications.schemas import ConfirmSaveRequest
+from app.modules.applications.service import (
+    analyze_recruiter_email,
+    confirm_and_save_email,
+)
 from app.modules.clients.models import Client
 from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application, ApplicationEvent
-from app.modules.applications.service import analyze_recruiter_email, confirm_and_save_email
-from app.modules.applications.schemas import ConfirmSaveRequest
 from app.modules.resumes.service import find_matching_resume
+from app.modules.users.models import User
+from sqlalchemy import func, select
 
 
 async def run_smart_resume_linking_tests():
@@ -295,7 +297,7 @@ async def run_smart_resume_linking_tests():
             matched_application_id=app_override.id,
             resume_id=res1.id,
         )
-        save_resp_followup = await confirm_and_save_email(
+        _save_resp_followup = await confirm_and_save_email(
             db=db,
             current_user=admin,
             payload=save_req_followup,

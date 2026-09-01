@@ -13,18 +13,19 @@ Verifies:
 import asyncio
 import io
 import uuid
-from datetime import date, datetime
-from sqlalchemy import select, func, or_
-from fastapi import UploadFile
+from datetime import date
 
 from app.core.database import async_session_factory
-from app.modules.users.models import User, SubAdminAssignment
-from app.modules.clients.models import Client, EmployeeClient
-from app.modules.resumes.models import Resume
-from app.modules.resumes.service import process_bulk_upload, get_resume_by_id, search_resumes
-from app.modules.notifications.models import Notification
 from app.modules.activity_logs.models import ActivityLog
-from app.modules.dashboard.service import get_employee_dashboard, get_client_dashboard
+from app.modules.clients.models import Client, EmployeeClient
+from app.modules.notifications.models import Notification
+from app.modules.resumes.service import (
+    process_bulk_upload,
+    search_resumes,
+)
+from app.modules.users.models import SubAdminAssignment, User
+from fastapi import UploadFile
+from sqlalchemy import select
 
 
 async def run_tests():
@@ -75,7 +76,7 @@ async def run_tests():
                 db.add(SubAdminAssignment(sub_admin_id=sub_admin_user.id, client_id=abc_client.id))
                 await db.commit()
 
-        print(f"✅ User Contexts Initialized:")
+        print("✅ User Contexts Initialized:")
         print(f"   - Recruiter: {emp_user.name}")
         print(f"   - Target Client: {abc_client.company_name} (Client User: {client_user.name})")
         print(f"   - Other Client: {other_client.company_name}")
@@ -110,7 +111,7 @@ async def run_tests():
         assert upload_resp.dashboard.today_uploads > 0, "today_uploads must be updated"
 
         await db.commit()
-        print(f"✅ Upload succeeded with Auto-Sync:")
+        print("✅ Upload succeeded with Auto-Sync:")
         print(f"   - Uploaded: {upload_resp.uploaded}")
         print(f"   - Client Synced: {upload_resp.client_synced}")
         print(f"   - Live Today Uploads: {upload_resp.dashboard.today_uploads}")

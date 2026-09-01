@@ -1,34 +1,34 @@
-import uuid
 import logging
-from datetime import datetime, timedelta
-from sqlalchemy import select, or_, func, desc, text
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException, UploadFile
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
-from app.modules.users.models import User
-from app.modules.clients.models import Client
-from app.modules.requirements.models import Requirement
-from app.modules.resumes.models import Resume
-from app.modules.applications.models import Application, ApplicationEvent, EmailIntake
+from fastapi import HTTPException, UploadFile
+from sqlalchemy import desc, func, or_, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.core.cache import invalidate_dashboard_cache
 from app.modules.activity_logs.models import ActivityLog
-from app.modules.notifications.models import Notification
-from app.modules.chat.models import ChatRoom, ChatMessage
+from app.modules.applications.models import Application, ApplicationEvent, EmailIntake
 from app.modules.applications.schemas import (
-    ApplicationCreate,
-    ApplicationResponse,
-    ApplicationEventResponse,
-    ApplicationTimelineResponse,
+    AIAnalysisResponse,
     AIInboxItemResponse,
     AIInboxOverviewResponse,
-    ProcessEmailRequest,
-    ProcessEmailResponse,
-    AIAnalysisResponse,
-    ConfirmSaveRequest,
+    ApplicationCreate,
+    ApplicationEventResponse,
+    ApplicationResponse,
+    ApplicationTimelineResponse,
     ConfirmAIRequest,
+    ConfirmSaveRequest,
+    ProcessEmailResponse,
 )
-from app.core.cache import invalidate_dashboard_cache
+from app.modules.chat.models import ChatMessage, ChatRoom
+from app.modules.clients.models import Client
+from app.modules.notifications.models import Notification
+from app.modules.resumes.models import Resume
 from app.modules.resumes.service import get_allowed_client_ids
+from app.modules.users.models import User
 from app.services.groq_service import GroqService
 
 logger = logging.getLogger(__name__)
@@ -693,7 +693,7 @@ async def get_ai_inbox_feed(
     allowed_clients = await get_allowed_client_ids(db, current_user)
 
     where_clauses = []
-    params = {}
+    params: dict[str, Any] = {}
 
     if allowed_clients is not None:
         if not allowed_clients:
@@ -1080,4 +1080,84 @@ async def get_pipeline_stats(
             stats["submitted"] += count
 
     return stats
+
+
+async def confirm_ai_event(
+    db: AsyncSession,
+    current_user: User,
+    app_id: uuid.UUID,
+    payload: ConfirmAIRequest,
+) -> ApplicationResponse:
+    app = (
+        await db.execute(
+            select(Application)
+            .where(Application.id == app_id)
+            .options(selectinload(Application.resume), selectinload(Application.client), selectinload(Application.employee))
+        )
+    ).scalar_one_or_none()
+    if not app:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    allowed_clients = await get_allowed_client_ids(db, current_user)
+    if allowed_clients is not None and app.client_id not in allowed_clients:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if payload.status:
+        app.status = payload.status
+    if payload.round:
+        app.current_round = payload.round
+    if payload.candidate and app.resume:
+        app.resume.candidate_name = payload.candidate
+    if payload.company and app.resume:
+        app.resume.company = payload.company
+    if payload.role and app.resume:
+        app.resume.role = payload.role
+    if payload.interview_date:
+        try:
+            app.interview_date = datetime.fromisoformat(payload.interview_date.replace("Z", "+00:00"))
+        except Exception:
+            pass
+
+    app.is_ai_processed = True
+    app.confidence = 100
+    app.updated_at = datetime.now(timezone.utc) if hasattr(datetime, "now") else datetime.utcnow()
+
+    db.add(
+        ApplicationEvent(
+            application_id=app.id,
+            event_type=payload.round or "Interview",
+            round_name=payload.round or "Interview Confirmed",
+            event_date=app.interview_date or datetime.now(timezone.utc),
+            interview_date=app.interview_date,
+            ai_json={"status": app.status, "round": app.current_round, "confirmed_by": current_user.name},
+            created_by=current_user.id,
+        )
+    )
+    await db.flush()
+    invalidate_dashboard_cache()
+
+    resume_obj = app.resume
+    client_obj = app.client
+    employee_obj = app.employee
+
+    return ApplicationResponse(
+        id=app.id,
+        resume_id=app.resume_id,
+        resume_display_id=resume_obj.display_id if resume_obj else "RES-000",
+        candidate_name=resume_obj.candidate_name if resume_obj else (app.candidate_name or "Candidate"),
+        company=resume_obj.company if resume_obj else (app.company or "Company"),
+        role=resume_obj.role if resume_obj else (app.role or "Role"),
+        requirement_id=app.requirement_id,
+        requirement_code=None,
+        client_id=app.client_id,
+        client_name=client_obj.company_name if client_obj else "Client",
+        employee_id=app.employee_id or current_user.id,
+        employee_name=employee_obj.name if employee_obj else current_user.name,
+        status=app.status,
+        current_round=app.current_round,
+        interview_date=app.interview_date,
+        is_ai_processed=app.is_ai_processed,
+        applied_date=app.applied_date,
+        updated_at=app.updated_at,
+    )
 
