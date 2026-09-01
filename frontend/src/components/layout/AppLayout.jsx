@@ -4,7 +4,7 @@ import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from '@/components/ui/CommandPalette';
 import { useAuth } from '@/features/auth/AuthContext';
-import api from '@/services/api';
+import api, { getWebSocketUrl } from '@/services/api';
 
 export function AppLayout() {
   const { user, bootstrapData } = useAuth();
@@ -58,14 +58,26 @@ export function AppLayout() {
     // Initial fetch of unread count
     fetchChatUnread();
 
-    // Connect to global user notification WebSocket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws/chat/global`;
     let ws = null;
     let reconnectTimeout = null;
+    let isCancelled = false;
 
-    function connectGlobalSocket() {
+    async function connectGlobalSocket() {
+      if (isCancelled) return;
+
+      let token = null;
+      try {
+        const tokenRes = await api.get('/chat/ws-token', { cache: false });
+        token = tokenRes.data?.token;
+      } catch {
+        // quiet fallback
+      }
+
+      if (isCancelled) return;
+
+      const baseWsUrl = getWebSocketUrl('/ws/chat/global');
+      const wsUrl = token ? `${baseWsUrl}?token=${encodeURIComponent(token)}` : baseWsUrl;
+
       try {
         ws = new WebSocket(wsUrl);
         ws.onmessage = (event) => {
@@ -80,8 +92,8 @@ export function AppLayout() {
           }
         };
         ws.onclose = (event) => {
-          if (event.code !== 4001 && event.code !== 4003) {
-            reconnectTimeout = setTimeout(connectGlobalSocket, 10000);
+          if (!isCancelled && event.code !== 4003) {
+            reconnectTimeout = setTimeout(connectGlobalSocket, 15000);
           }
         };
       } catch {
@@ -98,6 +110,7 @@ export function AppLayout() {
     }, 30000);
 
     return () => {
+      isCancelled = true;
       clearInterval(interval);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (ws) {

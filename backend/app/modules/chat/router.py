@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
 from app.core.rate_limit import rate_limit
+from app.core.security import create_access_token
 from app.modules.chat import service
 from app.modules.chat.models import PushSubscription
 from app.modules.chat.push_service import (
@@ -37,6 +38,13 @@ from app.modules.chat.websocket import manager
 from app.modules.notifications.models import NotificationPreference
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
+
+@router.get("/ws-token")
+async def get_ws_token(current_user=Depends(get_current_user)):
+    """Generate a token for WebSocket connection authentication."""
+    token = create_access_token(current_user.id, current_user.role)
+    return {"token": token, "user_id": str(current_user.id), "user_name": current_user.name}
 
 
 # ---- Push & Preference Endpoints ----

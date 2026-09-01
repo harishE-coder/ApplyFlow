@@ -105,6 +105,18 @@ export function ChatWindow({
 
   const isReadOnly = room?.status === 'read_only';
 
+  const typingUserNames = useMemo(() => {
+    return Object.entries(typingUsers)
+      .filter(([uid]) => uid !== user?.id)
+      .map(([, name]) => name);
+  }, [typingUsers, user?.id]);
+
+  const typingText = useMemo(() => {
+    if (typingUserNames.length === 1) return `${typingUserNames[0]} is typing...`;
+    if (typingUserNames.length > 1) return `${typingUserNames.join(', ')} are typing...`;
+    return '';
+  }, [typingUserNames]);
+
   const scrollToBottom = useCallback((behavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
@@ -147,6 +159,17 @@ export function ChatWindow({
       }
     }
   }, [messages, user?.id, scrollToBottom]);
+
+  // Auto-scroll on typing indicator appearance
+  useEffect(() => {
+    if (typingUserNames.length > 0 && scrollContainerRef.current) {
+      const { scrollHeight, scrollTop, clientHeight } = scrollContainerRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 140;
+      if (isNearBottom) {
+        scrollToBottom('smooth');
+      }
+    }
+  }, [typingUserNames.length, scrollToBottom]);
 
   // Scroll anchor preservation for infinite scroll
   const handleScroll = useCallback(() => {
@@ -229,17 +252,6 @@ export function ChatWindow({
       </div>
     );
   }
-
-  const typingUserNames = Object.entries(typingUsers)
-    .filter(([uid]) => uid !== user?.id)
-    .map(([, name]) => name);
-
-  const typingText =
-    typingUserNames.length === 1
-      ? `${typingUserNames[0]} is typing...`
-      : typingUserNames.length > 1
-      ? `${typingUserNames.join(', ')} are typing...`
-      : '';
 
   const roomMenuItems = [
     {
@@ -522,6 +534,26 @@ export function ChatWindow({
             );
           })
         )}
+
+        {/* Live in-stream typing bubble */}
+        {typingUserNames.length > 0 && (
+          <div className="flex items-center gap-3 animate-fadeIn my-2">
+            <div className="shrink-0">
+              <Avatar name={typingUserNames[0]} size="xs" variant="teal" />
+            </div>
+            <div className="px-3.5 py-2 rounded-2xl rounded-tl-xs bg-white border border-[#CBD5E1] shadow-xs flex items-center gap-2.5">
+              <span className="text-caption font-semibold text-[#081226]">
+                {typingText}
+              </span>
+              <span className="flex gap-1 items-center py-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#2563EB] animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#2563EB] animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#2563EB] animate-bounce" style={{ animationDelay: '300ms' }} />
+              </span>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 

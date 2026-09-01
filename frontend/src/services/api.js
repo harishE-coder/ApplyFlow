@@ -177,4 +177,17 @@ const api = {
   invalidateScopedCache,
 };
 
+export function getWebSocketUrl(path = '') {
+  const customApiUrl = import.meta.env.VITE_API_BASE_URL;
+  let baseUrl;
+  if (customApiUrl && customApiUrl.trim()) {
+    baseUrl = customApiUrl.trim().replace(/\/+$/, '').replace(/^http/, 'ws');
+  } else {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    baseUrl = `${protocol}//${window.location.host}`;
+  }
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${baseUrl}${cleanPath}`;
+}
+
 export default api;

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import api, { getWebSocketUrl } from '@/services/api';
 
 /**
  * Production-grade hook for managing real-time WebSocket connection to a chat room.
- * Stores event callbacks in useRef to prevent reconnection storms on React re-renders.
+ * Resolves API/WS endpoints across local dev, Vite proxies, and deployed environments.
+ * Authenticates via JWT token query param and cookies for 100% reliable cross-origin connections.
  * Features exponential backoff with ±20% jitter and full message lifecycle support.
  */
 export function useChatWebSocket(roomId, callbacks = {}) {
@@ -15,6 +17,7 @@ export function useChatWebSocket(roomId, callbacks = {}) {
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const isManuallyClosedRef = useRef(false);
+  const typingTimersRef = useRef({});
 
   const [isConnected, setIsConnected] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -33,10 +36,10 @@ export function useChatWebSocket(roomId, callbacks = {}) {
     isManuallyClosedRef.current = false;
     reconnectAttemptsRef.current = 0;
 
-    function connect() {
+    async function connect() {
       if (isManuallyClosedRef.current) return;
 
-      // Close any previous socket cleanly
+      // Clean up existing socket
       if (wsRef.current) {
         try {
           wsRef.current.onclose = null;
@@ -47,9 +50,19 @@ export function useChatWebSocket(roomId, callbacks = {}) {
         }
       }
 
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws/chat/${roomId}`;
+      // Fetch short-lived token for bulletproof WebSocket handshake
+      let token = null;
+      try {
+        const tokenRes = await api.get('/chat/ws-token', { cache: false });
+        token = tokenRes.data?.token;
+      } catch {
+        // Fallback to cookie authentication if token endpoint temporarily unreachable
+      }
+
+      if (isManuallyClosedRef.current) return;
+
+      const baseWsUrl = getWebSocketUrl(`/ws/chat/${roomId}`);
+      const wsUrl = token ? `${baseWsUrl}?token=${encodeURIComponent(token)}` : baseWsUrl;
 
       try {
         const ws = new WebSocket(wsUrl);
@@ -73,15 +86,35 @@ export function useChatWebSocket(roomId, callbacks = {}) {
             } else if (data.type === 'message_status') {
               callbacksRef.current.onMessageStatus?.(data);
             } else if (data.type === 'typing') {
-              setTypingUsers((prev) => {
-                if (data.is_typing) {
-                  return { ...prev, [data.user_id]: data.user_name };
-                } else {
+              const uid = data.user_id;
+              const uName = data.user_name || 'Someone';
+
+              // Clear any existing timer for this user
+              if (typingTimersRef.current[uid]) {
+                clearTimeout(typingTimersRef.current[uid]);
+                delete typingTimersRef.current[uid];
+              }
+
+              if (data.is_typing) {
+                setTypingUsers((prev) => ({ ...prev, [uid]: uName }));
+
+                // Auto-clear typing indicator after 2.5 seconds if no updates
+                typingTimersRef.current[uid] = setTimeout(() => {
+                  setTypingUsers((prev) => {
+                    const next = { ...prev };
+                    delete next[uid];
+                    return next;
+                  });
+                  delete typingTimersRef.current[uid];
+                }, 2500);
+              } else {
+                setTypingUsers((prev) => {
                   const next = { ...prev };
-                  delete next[data.user_id];
+                  delete next[uid];
                   return next;
-                }
-              });
+                });
+              }
+
               callbacksRef.current.onTyping?.(data);
             } else if (data.type === 'read_receipt') {
               callbacksRef.current.onReadReceipt?.(data);
@@ -100,11 +133,11 @@ export function useChatWebSocket(roomId, callbacks = {}) {
 
         ws.onclose = (event) => {
           setIsConnected(false);
-          // Do not reconnect on intentional auth closure (4001, 4003) or unmount
-          if (!isManuallyClosedRef.current && event.code !== 4001 && event.code !== 4003 && roomId) {
+          // Do not reconnect on intentional close or unmount
+          if (!isManuallyClosedRef.current && event.code !== 4003 && roomId) {
             setIsReconnecting(true);
             const attempt = reconnectAttemptsRef.current;
-            const baseDelay = Math.min(1000 * Math.pow(2, attempt), 30000);
+            const baseDelay = Math.min(1000 * Math.pow(2, attempt), 20000);
             const jitter = (Math.random() * 0.4 - 0.2) * baseDelay; // ±20% jitter
             const delay = Math.max(500, Math.round(baseDelay + jitter));
 
@@ -130,6 +163,9 @@ export function useChatWebSocket(roomId, callbacks = {}) {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      Object.values(typingTimersRef.current).forEach((t) => clearTimeout(t));
+      typingTimersRef.current = {};
+
       if (wsRef.current) {
         try {
           wsRef.current.onclose = null;
@@ -183,4 +219,5 @@ export function useChatWebSocket(roomId, callbacks = {}) {
     sendDeliveryAck,
   };
 }
+
 

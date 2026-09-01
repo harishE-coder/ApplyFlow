@@ -28,6 +28,8 @@ export function ChatInput({
   const typingTimerRef = useRef(null);
   const isTypingRef = useRef(false);
 
+  const lastTypingSentRef = useRef(0);
+
   // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
@@ -42,10 +44,20 @@ export function ChatInput({
 
     // Typing indicator management
     if (onTypingChange) {
-      if (!isTypingRef.current) {
+      const now = Date.now();
+      if (!val.trim()) {
+        isTypingRef.current = false;
+        if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+        onTypingChange(false);
+        return;
+      }
+
+      if (!isTypingRef.current || now - lastTypingSentRef.current > 1500) {
         isTypingRef.current = true;
+        lastTypingSentRef.current = now;
         onTypingChange(true);
       }
+
       if (typingTimerRef.current) {
         clearTimeout(typingTimerRef.current);
       }
