@@ -27,13 +27,14 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Connection Manager
 # ---------------------------------------------------------------------------
 
 class ConnectionManager:
     """
-    Manages active WebSocket connections per room and per user with room-level tracking
-    and multi-worker Redis shared presence support.
+    Manages active WebSocket connections per room and per user with room-level tracking,
+    cross-room live delivery broadcasts, and multi-worker Redis shared presence support.
     """
 
     def __init__(self):
@@ -75,6 +76,14 @@ class ConnectionManager:
             "status": "online",
             "online_users": self.get_online_users(rid),
         }, exclude_user=None)
+
+        # Trigger delivery update for sender messages in this room
+        await self.broadcast(rid, {
+            "type": "message_status",
+            "status": "delivered",
+            "room_id": rid,
+            "delivered_to": uid,
+        }, exclude_user=uid)
 
     def disconnect(self, websocket: WebSocket, room_id: str, user_id: str):
         rid = str(room_id)
@@ -150,6 +159,24 @@ class ConnectionManager:
             for ws in dead:
                 self.disconnect(ws, rid, uid)
 
+    async def send_to_user_global(self, user_id: str | uuid.UUID, message: dict):
+        """Send message to all active sockets of a user anywhere across the application."""
+        uid = str(user_id)
+        if uid in self.user_connections:
+            dead = []
+            for ws, rid in list(self.user_connections[uid].items()):
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    dead.append((ws, rid))
+            for ws, rid in dead:
+                self.disconnect(ws, rid, uid)
+
+    async def broadcast_room_update(self, room_id: str | uuid.UUID, participant_ids: list[str | uuid.UUID], message: dict):
+        """Broadcast room snippet / unread updates to all participants across all active pages."""
+        for pid in participant_ids:
+            await self.send_to_user_global(pid, message)
+
 
 manager = ConnectionManager()
 
@@ -220,10 +247,21 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
         await websocket.close(code=4001, reason="Authentication failed")
         return
 
-    room_uuid = uuid.UUID(room_id)
-    if not await check_ws_room_access(user, room_uuid):
-        await websocket.close(code=4003, reason="Access denied")
-        return
+    # Support global user connection identifier
+    is_user_global_socket = room_id in ("global", "user")
+
+    if not is_user_global_socket:
+        try:
+            room_uuid = uuid.UUID(room_id)
+        except ValueError:
+            await websocket.close(code=4002, reason="Invalid room ID")
+            return
+
+        if not await check_ws_room_access(user, room_uuid):
+            await websocket.close(code=4003, reason="Access denied")
+            return
+    else:
+        room_uuid = None
 
     user_id_str = str(user.id)
     await manager.connect(websocket, room_id, user_id_str, user.name, user.role)
@@ -233,7 +271,7 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
             data = await websocket.receive_json()
             msg_type = data.get("type")
 
-            if msg_type == "message":
+            if msg_type == "message" and not is_user_global_socket:
                 # Save message to DB
                 text = data.get("text", "").strip()
                 client_id = data.get("client_id")
@@ -267,31 +305,35 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
 
                     await db.commit()
 
-                    # Determine initial delivery status
+                    # Determine initial delivery status: delivered if any other user is online/in room
                     online_users = manager.get_online_users(room_id)
-                    has_recipients = any(uid != user_id_str for uid in online_users)
+                    has_recipients = any(uid != user_id_str for uid in online_users) or any(
+                        manager.is_user_online(uid) for uid in manager.user_connections if uid != user_id_str
+                    )
                     msg_status = "delivered" if has_recipients else "sent"
+
+                    msg_payload = {
+                        "id": str(msg.id),
+                        "room_id": room_id,
+                        "client_id": client_id,
+                        "status": msg_status,
+                        "sender": {
+                            "id": user_id_str,
+                            "name": user.name,
+                            "role": user.role,
+                        },
+                        "message": text,
+                        "attachment_type": None,
+                        "attachment_reference": None,
+                        "attachment_filename": None,
+                        "created_at": msg.created_at.isoformat() if msg.created_at else datetime.now(timezone.utc).isoformat(),
+                        "is_deleted": False,
+                    }
 
                     # Broadcast to all in room
                     await manager.broadcast(room_id, {
                         "type": "new_message",
-                        "message": {
-                            "id": str(msg.id),
-                            "room_id": room_id,
-                            "client_id": client_id,
-                            "status": msg_status,
-                            "sender": {
-                                "id": user_id_str,
-                                "name": user.name,
-                                "role": user.role,
-                            },
-                            "message": text,
-                            "attachment_type": None,
-                            "attachment_reference": None,
-                            "attachment_filename": None,
-                            "created_at": msg.created_at.isoformat() if msg.created_at else datetime.now(timezone.utc).isoformat(),
-                            "is_deleted": False,
-                        },
+                        "message": msg_payload,
                     })
 
                     # Dispatch push notification to inactive room participants in background
@@ -308,7 +350,16 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
                         )
                     )
 
-            elif msg_type == "typing":
+            elif msg_type == "delivery_ack" and not is_user_global_socket:
+                message_id = data.get("message_id")
+                if message_id:
+                    await manager.broadcast(room_id, {
+                        "type": "message_status",
+                        "message_id": str(message_id),
+                        "status": "delivered",
+                    })
+
+            elif msg_type == "typing" and not is_user_global_socket:
                 await manager.broadcast(room_id, {
                     "type": "typing",
                     "user_id": user_id_str,
@@ -316,7 +367,7 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
                     "is_typing": data.get("is_typing", True),
                 }, exclude_user=user_id_str)
 
-            elif msg_type == "read":
+            elif msg_type == "read" and not is_user_global_socket:
                 message_id = data.get("message_id")
                 if message_id:
                     async with async_session_factory() as db:
@@ -348,17 +399,20 @@ async def chat_websocket(websocket: WebSocket, room_id: str):
                         "type": "message_status",
                         "message_id": message_id,
                         "status": "read",
+                        "read_by": user_id_str,
                     })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id, user_id_str)
-        await manager.broadcast(room_id, {
-            "type": "presence",
-            "user_id": user_id_str,
-            "user_name": user.name,
-            "status": "offline",
-            "online_users": manager.get_online_users(room_id),
-        })
+        if not is_user_global_socket:
+            await manager.broadcast(room_id, {
+                "type": "presence",
+                "user_id": user_id_str,
+                "user_name": user.name,
+                "status": "offline",
+                "online_users": manager.get_online_users(room_id),
+            })
     except Exception:
         manager.disconnect(websocket, room_id, user_id_str)
+
 

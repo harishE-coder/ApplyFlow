@@ -228,6 +228,12 @@ async def get_messages(
     other_reads = res_reads.scalars().all()
     max_read_at = max([r.last_read_at for r in other_reads if r.last_read_at], default=None)
 
+    from app.modules.chat.websocket import manager
+    room_id_str = str(room_id)
+    is_recipient_online = any(uid != str(user.id) for uid in manager.get_online_users(room_id_str)) or any(
+        manager.is_user_online(r.user_id) for r in other_reads
+    )
+
     items = []
     for msg in reversed(messages):
         sender_info = MessageSender(
@@ -239,6 +245,8 @@ async def get_messages(
         if is_own:
             if max_read_at and msg.created_at and msg.created_at <= max_read_at:
                 msg_status = "read"
+            elif is_recipient_online:
+                msg_status = "delivered"
             else:
                 msg_status = "sent"
         else:
@@ -320,6 +328,14 @@ async def send_message(
     await db.flush()
     invalidate_chat_cache()
 
+    from app.modules.chat.websocket import manager
+    room_id_str = str(room_id)
+    online_users = manager.get_online_users(room_id_str)
+    has_recipients = any(uid != str(user.id) for uid in online_users) or any(
+        manager.is_user_online(uid) for uid in manager.user_connections if uid != str(user.id)
+    )
+    initial_status = "delivered" if has_recipients else "sent"
+
     sender_info = MessageSender(id=user.id, name=user.name, role=user.role)
     return ChatMessageResponse(
         id=msg.id,
@@ -329,7 +345,7 @@ async def send_message(
         attachment_type=msg.attachment_type,
         attachment_reference=msg.attachment_reference,
         client_id=client_id,
-        status="sent",
+        status=initial_status,
         created_at=msg.created_at or datetime.now(timezone.utc),
         edited_at=None,
     )
@@ -406,18 +422,18 @@ async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
     cache_key = f"chat_unread:{user.id!s}"
     cached = cache.get(cache_key)
     if cached is not None:
-        return UnreadCountResponse(count=cached)
+        return UnreadCountResponse(total_unread=cached, unread_count=cached)
 
     allowed = await get_allowed_client_ids(db, user)
     client_q = select(ChatRoom.id).join(Client, ChatRoom.client_id == Client.id).where(Client.is_active == True)
     if allowed is not None:
         if not allowed:
-            return UnreadCountResponse(count=0)
+            return UnreadCountResponse(total_unread=0, unread_count=0)
         client_q = client_q.where(Client.id.in_(allowed))
 
     room_ids = (await db.execute(client_q)).scalars().all()
     if not room_ids:
-        return UnreadCountResponse(count=0)
+        return UnreadCountResponse(total_unread=0, unread_count=0)
 
     reads_res = await db.execute(
         select(ChatRead).where(ChatRead.user_id == user.id, ChatRead.room_id.in_(room_ids))
@@ -437,7 +453,7 @@ async def get_total_unread(db: AsyncSession, user: User) -> UnreadCountResponse:
         total_unread += cnt
 
     cache.set(cache_key, total_unread, ttl=30.0, tags={"chat"})
-    return UnreadCountResponse(count=total_unread)
+    return UnreadCountResponse(total_unread=total_unread, unread_count=total_unread)
 
 
 async def delete_message(

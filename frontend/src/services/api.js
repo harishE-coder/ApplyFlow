@@ -6,8 +6,12 @@ const inflightMap = new Map();
 
 const DEFAULT_TTL_MS = 25000; // 25 seconds default TTL
 
+const apiBase = import.meta.env.VITE_API_BASE_URL
+  ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')}/api`
+  : '/api';
+
 const rawAxios = axios.create({
-  baseURL: `${import.meta.env.VITE_API_BASE_URL}/api`,
+  baseURL: apiBase,
   withCredentials: true,
 });
 

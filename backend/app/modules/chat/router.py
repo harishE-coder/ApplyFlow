@@ -225,15 +225,31 @@ async def send_message(
     )
     room_id_str = str(room_id)
     online_users = manager.get_online_users(room_id_str)
-    has_recipients = any(uid != str(current_user.id) for uid in online_users)
+    has_recipients = any(uid != str(current_user.id) for uid in online_users) or any(
+        manager.is_user_online(uid) for uid in manager.user_connections if uid != str(current_user.id)
+    )
     if has_recipients:
         res.status = "delivered"
 
-    # Broadcast to WebSocket connections
+    msg_data = res.model_dump(mode="json")
+
+    # Broadcast to active WebSocket connections in room
     await manager.broadcast(room_id_str, {
         "type": "new_message",
-        "message": res.model_dump(mode="json"),
+        "message": msg_data,
     })
+
+    # Broadcast live room update to other active user sockets across the app
+    for uid in list(manager.user_connections.keys()):
+        if uid != str(current_user.id):
+            await manager.send_to_user_global(uid, {
+                "type": "room_update",
+                "room_id": room_id_str,
+                "message": msg_data,
+                "last_message": res.message,
+                "last_message_sender": current_user.name,
+                "last_message_at": res.created_at.isoformat() if res.created_at else datetime.now(timezone.utc).isoformat(),
+            })
 
     # Dispatch Web Push notifications via FastAPI BackgroundTasks
     background_tasks.add_task(
@@ -262,15 +278,31 @@ async def share_resume(
     res = await service.share_resume(db, room_id, current_user, body.resume_id)
     room_id_str = str(room_id)
     online_users = manager.get_online_users(room_id_str)
-    has_recipients = any(uid != str(current_user.id) for uid in online_users)
+    has_recipients = any(uid != str(current_user.id) for uid in online_users) or any(
+        manager.is_user_online(uid) for uid in manager.user_connections if uid != str(current_user.id)
+    )
     if has_recipients:
         res.status = "delivered"
 
-    # Broadcast to WebSocket connections
+    msg_data = res.model_dump(mode="json")
+
+    # Broadcast to active WebSocket connections in room
     await manager.broadcast(room_id_str, {
         "type": "new_message",
-        "message": res.model_dump(mode="json"),
+        "message": msg_data,
     })
+
+    # Broadcast live room update to other active user sockets across the app
+    for uid in list(manager.user_connections.keys()):
+        if uid != str(current_user.id):
+            await manager.send_to_user_global(uid, {
+                "type": "room_update",
+                "room_id": room_id_str,
+                "message": msg_data,
+                "last_message": res.message,
+                "last_message_sender": current_user.name,
+                "last_message_at": res.created_at.isoformat() if res.created_at else datetime.now(timezone.utc).isoformat(),
+            })
 
     # Dispatch Web Push notifications via FastAPI BackgroundTasks
     background_tasks.add_task(
@@ -301,19 +333,35 @@ async def mark_read(
     msg_id = body.message_id if body else None
     await service.mark_read(db, room_id, current_user, msg_id)
     room_id_str = str(room_id)
-    # Broadcast read receipt
+
+    # Broadcast read receipt to other participants in the room
     await manager.broadcast(room_id_str, {
         "type": "read_receipt",
         "user_id": str(current_user.id),
         "user_name": current_user.name,
         "message_id": str(msg_id) if msg_id else None,
     }, exclude_user=str(current_user.id))
+
     if msg_id:
+        # Check if the marked message was sent by someone else before broadcasting status: read
+        target_msg = (
+            await db.execute(select(ChatMessage).where(ChatMessage.id == msg_id))
+        ).scalar_one_or_none()
+        if target_msg and target_msg.sender_id != current_user.id:
+            await manager.broadcast(room_id_str, {
+                "type": "message_status",
+                "message_id": str(msg_id),
+                "status": "read",
+                "read_by": str(current_user.id),
+            })
+    else:
         await manager.broadcast(room_id_str, {
             "type": "message_status",
-            "message_id": str(msg_id),
             "status": "read",
-        })
+            "room_id": room_id_str,
+            "read_by": str(current_user.id),
+        }, exclude_user=str(current_user.id))
+
     return {"success": True}
 
 

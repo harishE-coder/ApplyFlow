@@ -17,12 +17,14 @@ export function useChatWebSocket(roomId, callbacks = {}) {
   const isManuallyClosedRef = useRef(false);
 
   const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingUsers, setTypingUsers] = useState({});
 
   useEffect(() => {
     if (!roomId) {
       setIsConnected(false);
+      setIsReconnecting(false);
       setOnlineUsers([]);
       setTypingUsers({});
       return;
@@ -55,7 +57,9 @@ export function useChatWebSocket(roomId, callbacks = {}) {
 
         ws.onopen = () => {
           setIsConnected(true);
+          setIsReconnecting(false);
           reconnectAttemptsRef.current = 0;
+          callbacksRef.current.onOpen?.();
         };
 
         ws.onmessage = (event) => {
@@ -64,6 +68,8 @@ export function useChatWebSocket(roomId, callbacks = {}) {
 
             if (data.type === 'new_message') {
               callbacksRef.current.onMessage?.(data.message);
+            } else if (data.type === 'room_update') {
+              callbacksRef.current.onRoomUpdate?.(data);
             } else if (data.type === 'message_status') {
               callbacksRef.current.onMessageStatus?.(data);
             } else if (data.type === 'typing') {
@@ -96,6 +102,7 @@ export function useChatWebSocket(roomId, callbacks = {}) {
           setIsConnected(false);
           // Do not reconnect on intentional auth closure (4001, 4003) or unmount
           if (!isManuallyClosedRef.current && event.code !== 4001 && event.code !== 4003 && roomId) {
+            setIsReconnecting(true);
             const attempt = reconnectAttemptsRef.current;
             const baseDelay = Math.min(1000 * Math.pow(2, attempt), 30000);
             const jitter = (Math.random() * 0.4 - 0.2) * baseDelay; // ±20% jitter
@@ -134,6 +141,7 @@ export function useChatWebSocket(roomId, callbacks = {}) {
       }
       setTypingUsers({});
       setIsConnected(false);
+      setIsReconnecting(false);
     };
   }, [roomId]);
 
@@ -158,12 +166,21 @@ export function useChatWebSocket(roomId, callbacks = {}) {
     }
   }, []);
 
+  const sendDeliveryAck = useCallback((messageId) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'delivery_ack', message_id: messageId }));
+    }
+  }, []);
+
   return {
     isConnected,
+    isReconnecting,
     onlineUsers,
     typingUsers,
     sendMessage,
     sendTyping,
     sendRead,
+    sendDeliveryAck,
   };
 }
+

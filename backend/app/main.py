@@ -275,11 +275,18 @@ app = FastAPI(
 app.add_middleware(ProfilerMiddleware)
 
 # ---- CORS ----
-origins = [
-    origin.strip()
-    for origin in os.getenv("APP_CORS_ORIGINS", "").split(",")
-    if origin.strip()
-]
+raw_origins = os.getenv("APP_CORS_ORIGINS", "")
+origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+if not origins:
+    origins = [
+        settings.frontend_url,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://localhost:8000",
+    ]
+elif settings.frontend_url and settings.frontend_url not in origins:
+    origins.append(settings.frontend_url)
 print("CORS Origins Loaded:", origins)
 
 app.add_middleware(

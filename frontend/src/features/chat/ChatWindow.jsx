@@ -51,15 +51,27 @@ function formatDateHeader(dateStr) {
 
 function MessageStatusIcon({ status }) {
   if (status === 'pending') {
-    return <Clock className="w-3 h-3 text-[#94A3B8]" title="Sending..." />;
+    return <Clock className="w-3 h-3 text-blue-200 animate-spin" title="Sending..." />;
   }
   if (status === 'read') {
-    return <CheckCheck className="w-3.5 h-3.5 text-[#38BDF8]" title="Read" />;
+    return (
+      <span className="inline-flex items-center text-[#38BDF8] drop-shadow-xs transition-all animate-fadeIn" title="Read by recipient">
+        <CheckCheck className="w-3.5 h-3.5 stroke-[2.5]" />
+      </span>
+    );
   }
   if (status === 'delivered') {
-    return <CheckCheck className="w-3.5 h-3.5 text-[#94A3B8]" title="Delivered" />;
+    return (
+      <span className="inline-flex items-center text-blue-100/90 transition-all animate-fadeIn" title="Delivered to recipient">
+        <CheckCheck className="w-3.5 h-3.5 stroke-[2]" />
+      </span>
+    );
   }
-  return <Check className="w-3.5 h-3.5 text-[#94A3B8]" title="Sent" />;
+  return (
+    <span className="inline-flex items-center text-blue-200/80 transition-all" title="Sent to server">
+      <Check className="w-3.5 h-3.5 stroke-[2]" />
+    </span>
+  );
 }
 
 export function ChatWindow({
@@ -67,6 +79,8 @@ export function ChatWindow({
   messages = [],
   onlineUsers = [],
   typingUsers = {},
+  isConnected = false,
+  isReconnecting = false,
   hasMore = false,
   loadingMore = false,
   onLoadMoreMessages,
@@ -280,12 +294,24 @@ export function ChatWindow({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="text-small font-bold text-[#081226] truncate">{room.client_name}</h2>
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
-                  isReadOnly ? 'bg-[#94A3B8]' : 'bg-[#16A34A]'
-                }`}
-                title={isReadOnly ? 'Read-only room' : 'Active room'}
-              />
+              {isConnected ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 shadow-2xs animate-fadeIn" title="Real-time WebSocket connection active">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  Live
+                </span>
+              ) : isReconnecting ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 shadow-2xs animate-pulse" title="Reconnecting to real-time server...">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  Reconnecting
+                </span>
+              ) : (
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    isReadOnly ? 'bg-[#94A3B8]' : 'bg-[#16A34A]'
+                  }`}
+                  title={isReadOnly ? 'Read-only room' : 'Active room'}
+                />
+              )}
               {isReadOnly && (
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#F1F5F9] text-[#64748B]">
                   Read-only
@@ -300,17 +326,23 @@ export function ChatWindow({
 
         <div className="flex items-center gap-2.5">
           <div className="flex items-center -space-x-1.5 overflow-hidden">
-            {room.participants?.slice(0, 4).map((p) => (
-              <div key={p.id} title={`${p.name} (${p.role})`}>
-                <Avatar
-                  name={p.name}
-                  size="xs"
-                  variant={
-                    p.role === 'admin' ? 'blue' : p.role === 'client' ? 'orange' : 'teal'
-                  }
-                />
-              </div>
-            ))}
+            {room.participants?.slice(0, 4).map((p) => {
+              const isOnline = onlineUsers.includes(String(p.id));
+              return (
+                <div key={p.id} className="relative" title={`${p.name} (${p.role})${isOnline ? ' • Online now' : ''}`}>
+                  <Avatar
+                    name={p.name}
+                    size="xs"
+                    variant={
+                      p.role === 'admin' ? 'blue' : p.role === 'client' ? 'orange' : 'teal'
+                    }
+                  />
+                  {isOnline && (
+                    <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-500 border border-white" />
+                  )}
+                </div>
+              );
+            })}
           </div>
           {room.participants?.length > 4 && (
             <span className="text-[11px] font-semibold text-[#64748B] bg-[#F1F5F9] px-2 py-0.5 rounded-full">

@@ -14,6 +14,8 @@ import {
 import api from '@/services/api';
 import { cn } from '@/utils/cn';
 
+import { audioChime } from '@/utils/audioChime';
+
 export function ChatPage() {
   const { user } = useAuth();
   const { roomId: urlRoomId } = useParams();
@@ -73,7 +75,9 @@ export function ChatPage() {
       // Mark read if there are messages
       if (items.length > 0) {
         const lastMsg = items[items.length - 1];
-        api.patch(`/chat/rooms/${roomId}/read`, { message_id: lastMsg.id }).catch(() => {});
+        if (lastMsg.sender?.id !== user?.id) {
+          api.patch(`/chat/rooms/${roomId}/read`, { message_id: lastMsg.id }).catch(() => {});
+        }
         setRooms((prev) =>
           prev.map((r) => (r.id === roomId ? { ...r, unread_count: 0 } : r))
         );
@@ -84,7 +88,7 @@ export function ChatPage() {
     } finally {
       setLoadingMessages(false);
     }
-  }, [toastError]);
+  }, [user?.id, toastError]);
 
   useEffect(() => {
     if (activeRoomId) {
@@ -121,6 +125,8 @@ export function ChatPage() {
   // Handle incoming real-time WS message
   const handleIncomingMessage = useCallback(
     (newMsg) => {
+      const isFromOther = newMsg.sender?.id !== user?.id;
+
       if (newMsg.room_id === activeRoomId) {
         setMessages((prev) => {
           // Deduplicate / replace optimistic message by client_id or server id
@@ -136,7 +142,16 @@ export function ChatPage() {
           }
           return [...prev, newMsg];
         });
-        api.patch(`/chat/rooms/${activeRoomId}/read`, { message_id: newMsg.id }).catch(() => {});
+
+        // Only send read receipt if message is from another participant
+        if (isFromOther) {
+          audioChime.playMessagePop();
+          api.patch(`/chat/rooms/${activeRoomId}/read`, { message_id: newMsg.id }).catch(() => {});
+        }
+      } else {
+        if (isFromOther) {
+          audioChime.playMessagePop();
+        }
       }
 
       setRooms((prev) =>
@@ -154,19 +169,50 @@ export function ChatPage() {
         })
       );
     },
+    [activeRoomId, user?.id]
+  );
+
+  // Handle cross-room live updates
+  const handleRoomUpdate = useCallback(
+    (roomUpdateData) => {
+      const { room_id, last_message, last_message_sender, last_message_at } = roomUpdateData;
+      setRooms((prev) =>
+        prev.map((r) => {
+          if (r.id === room_id) {
+            return {
+              ...r,
+              last_message,
+              last_message_sender,
+              last_message_at,
+              unread_count: r.id === activeRoomId ? 0 : (r.unread_count || 0) + 1,
+            };
+          }
+          return r;
+        })
+      );
+    },
     [activeRoomId]
   );
 
   // Handle message delivery/read status updates
   const handleMessageStatus = useCallback((statusData) => {
     const { message_id, client_id, status } = statusData;
+
     setMessages((prev) =>
       prev.map((m) => {
+        // Individual message match
         if (
           (message_id && m.id === message_id) ||
           (client_id && m.client_id === client_id)
         ) {
           return { ...m, status };
+        }
+        // Room-level bulk status update
+        if (!message_id && status === 'delivered' && m.status === 'sent') {
+          return { ...m, status: 'delivered' };
+        }
+        if (!message_id && status === 'read' && m.status !== 'read') {
+          return { ...m, status: 'read' };
         }
         return m;
       })
@@ -179,6 +225,10 @@ export function ChatPage() {
     if (message_id) {
       setMessages((prev) =>
         prev.map((m) => (m.id === message_id ? { ...m, status: 'read' } : m))
+      );
+    } else {
+      setMessages((prev) =>
+        prev.map((m) => (m.status !== 'read' ? { ...m, status: 'read' } : m))
       );
     }
   }, []);
@@ -197,11 +247,14 @@ export function ChatPage() {
 
   // Real-time WebSocket hook with stable callbacks
   const {
+    isConnected,
+    isReconnecting,
     onlineUsers,
     typingUsers,
     sendTyping: wsSendTyping,
   } = useChatWebSocket(activeRoomId, {
     onMessage: handleIncomingMessage,
+    onRoomUpdate: handleRoomUpdate,
     onMessageStatus: handleMessageStatus,
     onReadReceipt: handleReadReceipt,
     onMessageDeleted: handleWsMessageDeleted,
@@ -392,6 +445,8 @@ export function ChatPage() {
             activeRoomId={activeRoomId}
             onSelectRoom={handleSelectRoom}
             loading={loadingRooms}
+            onlineUsers={onlineUsers}
+            typingUsers={typingUsers}
           />
         </div>
 
@@ -407,6 +462,8 @@ export function ChatPage() {
           messages={messages}
           onlineUsers={onlineUsers}
           typingUsers={typingUsers}
+          isConnected={isConnected}
+          isReconnecting={isReconnecting}
           hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMoreMessages={loadMoreMessages}

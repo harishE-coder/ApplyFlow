@@ -55,12 +55,56 @@ export function AppLayout() {
 
   useEffect(() => {
     if (!user) return;
-    // Set up polling interval without immediate redundant fetch on mount
+    // Initial fetch of unread count
+    fetchChatUnread();
+
+    // Connect to global user notification WebSocket
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws/chat/global`;
+    let ws = null;
+    let reconnectTimeout = null;
+
+    function connectGlobalSocket() {
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'room_update' || data.type === 'new_message') {
+              fetchChatUnread();
+              fetchNotifications();
+            }
+          } catch {
+            // ignore
+          }
+        };
+        ws.onclose = (event) => {
+          if (event.code !== 4001 && event.code !== 4003) {
+            reconnectTimeout = setTimeout(connectGlobalSocket, 10000);
+          }
+        };
+      } catch {
+        // quiet fallback to interval polling
+      }
+    }
+
+    connectGlobalSocket();
+
+    // Interval fallback polling
     const interval = setInterval(() => {
       fetchNotifications();
       fetchChatUnread();
     }, 30000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(interval);
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
+    };
   }, [user, fetchNotifications, fetchChatUnread]);
 
   const handleOpenCommandPalette = useCallback(() => setIsCommandPaletteOpen(true), []);

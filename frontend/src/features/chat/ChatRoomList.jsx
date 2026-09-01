@@ -29,6 +29,8 @@ export function ChatRoomList({
   activeRoomId = null,
   onSelectRoom,
   loading = false,
+  onlineUsers = [],
+  typingUsers = {},
 }) {
   const navigate = useNavigate();
   const { user, isAdmin, isEmployee, isClient } = useAuth();
@@ -116,6 +118,10 @@ export function ChatRoomList({
           filteredRooms.map((room) => {
             const isActive = room.id === activeRoomId;
             const hasUnread = room.unread_count > 0;
+            const hasOnlineParticipants = room.participants?.some(
+              (p) => p.id !== user?.id && onlineUsers.includes(String(p.id))
+            );
+            const isTypingInThisRoom = isActive && Object.keys(typingUsers).length > 0;
 
             // Participants string (e.g. Harish · Ravi · John)
             const participantNames = room.participants
@@ -135,14 +141,19 @@ export function ChatRoomList({
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
                     {/* Room Avatar */}
-                    <div
-                      className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-[13px] shrink-0 ${
-                        isActive
-                          ? 'bg-white/20 text-white'
-                          : 'bg-[#101F3D] text-[#93C5FD] border border-[#1E2E4E]'
-                      }`}
-                    >
-                      <Building2 className="w-5 h-5" />
+                    <div className="relative shrink-0">
+                      <div
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-[13px] ${
+                          isActive
+                            ? 'bg-white/20 text-white'
+                            : 'bg-[#101F3D] text-[#93C5FD] border border-[#1E2E4E]'
+                        }`}
+                      >
+                        <Building2 className="w-5 h-5" />
+                      </div>
+                      {hasOnlineParticipants && (
+                        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-[#081226]" title="Participant online" />
+                      )}
                     </div>
 
                     <div className="min-w-0">
@@ -180,15 +191,26 @@ export function ChatRoomList({
                     )}
 
                     {hasUnread && (
-                      <span className="min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#F97316] text-white text-[10px] font-extrabold flex items-center justify-center shadow-xs">
+                      <span className="min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#F97316] text-white text-[10px] font-extrabold flex items-center justify-center shadow-xs animate-bounce" style={{ animationDuration: '2s' }}>
                         {room.unread_count}
                       </span>
                     )}
                   </div>
                 </div>
 
-                {/* Last message preview */}
-                {room.last_message && (
+                {/* Last message / Typing preview */}
+                {isTypingInThisRoom ? (
+                  <div className="mt-2 pl-13 pr-1">
+                    <p className={`text-caption italic font-medium flex items-center gap-1.5 ${isActive ? 'text-white' : 'text-[#60A5FA]'}`}>
+                      <span className="flex gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </span>
+                      <span>typing...</span>
+                    </p>
+                  </div>
+                ) : room.last_message ? (
                   <div className="mt-2 pl-13 pr-1">
                     <p
                       className={`text-caption truncate ${
@@ -203,7 +225,7 @@ export function ChatRoomList({
                       {room.last_message}
                     </p>
                   </div>
-                )}
+                ) : null}
               </div>
             );
           })
@@ -212,3 +234,5 @@ export function ChatRoomList({
     </div>
   );
 }
+
+export default ChatRoomList;
