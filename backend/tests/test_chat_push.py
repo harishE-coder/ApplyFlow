@@ -252,18 +252,20 @@ async def test_active_same_room_no_push(setup_chat_environment):
     assert manager.is_user_in_room(recipient.id, room.id) is True
 
     # Patch push_service.send_push_notification to ensure it is NOT called
-    with patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send:
-        with patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory:
-            mock_session_factory.return_value.__aenter__.return_value = db
-            sent_count = await push_service.notify_room_recipients(
-                room_id=room.id,
-                sender_id=sender.id,
-                sender_name=sender.name,
-                message_id=uuid.uuid4(),
-                preview_text="Hello, are you there?",
-            )
-            assert sent_count == 0
-            assert mock_send.call_count == 0
+    with (
+        patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send,
+        patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = db
+        sent_count = await push_service.notify_room_recipients(
+            room_id=room.id,
+            sender_id=sender.id,
+            sender_name=sender.name,
+            message_id=uuid.uuid4(),
+            preview_text="Hello, are you there?",
+        )
+        assert sent_count == 0
+        assert mock_send.call_count == 0
 
 
 @pytest.mark.anyio
@@ -371,19 +373,21 @@ async def test_multiple_tabs_dedup_one_push(setup_chat_environment):
     # Pre-set deduplication key in cache (simulating an already-handled tab or previous worker)
     cache.set_nx(f"push:{msg_id}:{recipient.id}", "1", ttl=30)
 
-    with patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send:
-        with patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory:
-            mock_session_factory.return_value.__aenter__.return_value = db
-            sent_count = await push_service.notify_room_recipients(
-                room_id=room.id,
-                sender_id=sender.id,
-                sender_name=sender.name,
-                message_id=msg_id,
-                preview_text="Duplicate test",
-            )
-            # Must skip due to SETNX
-            assert sent_count == 0
-            assert mock_send.call_count == 0
+    with (
+        patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send,
+        patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = db
+        sent_count = await push_service.notify_room_recipients(
+            room_id=room.id,
+            sender_id=sender.id,
+            sender_name=sender.name,
+            message_id=msg_id,
+            preview_text="Duplicate test",
+        )
+        # Must skip due to SETNX
+        assert sent_count == 0
+        assert mock_send.call_count == 0
 
 
 @pytest.mark.anyio
@@ -418,19 +422,21 @@ async def test_multiple_devices_push_both(setup_chat_environment):
         called_endpoints.append(d_sub.endpoint)
         return True
 
-    with patch("app.modules.chat.push_service.send_push_notification", side_effect=mock_send):
-        with patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory:
-            mock_session_factory.return_value.__aenter__.return_value = db
-            sent_count = await push_service.notify_room_recipients(
-                room_id=room.id,
-                sender_id=sender.id,
-                sender_name=sender.name,
-                message_id=uuid.uuid4(),
-                preview_text="Multi device alert",
-            )
-            assert "https://fcm.googleapis.com/fcm/send/device-laptop" in called_endpoints
-            assert "https://fcm.googleapis.com/fcm/send/device-phone" in called_endpoints
-            assert sent_count == 2
+    with (
+        patch("app.modules.chat.push_service.send_push_notification", side_effect=mock_send),
+        patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = db
+        sent_count = await push_service.notify_room_recipients(
+            room_id=room.id,
+            sender_id=sender.id,
+            sender_name=sender.name,
+            message_id=uuid.uuid4(),
+            preview_text="Multi device alert",
+        )
+        assert "https://fcm.googleapis.com/fcm/send/device-laptop" in called_endpoints
+        assert "https://fcm.googleapis.com/fcm/send/device-phone" in called_endpoints
+        assert sent_count == 2
 
 
 @pytest.mark.anyio
@@ -572,19 +578,21 @@ async def test_muted_room_preferences(setup_chat_environment):
     db.add_all([sub, pref])
     await db.commit()
 
-    with patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send:
-        with patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory:
-            mock_session_factory.return_value.__aenter__.return_value = db
-            sent_count = await push_service.notify_room_recipients(
-                room_id=room.id,
-                sender_id=sender.id,
-                sender_name=sender.name,
-                message_id=uuid.uuid4(),
-                preview_text="Muted room message",
-            )
-            # Since room is muted, push notification must not be sent
-            assert sent_count == 0
-            assert mock_send.call_count == 0
+    with (
+        patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send,
+        patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = db
+        sent_count = await push_service.notify_room_recipients(
+            room_id=room.id,
+            sender_id=sender.id,
+            sender_name=sender.name,
+            message_id=uuid.uuid4(),
+            preview_text="Muted room message",
+        )
+        # Since room is muted, push notification must not be sent
+        assert sent_count == 0
+        assert mock_send.call_count == 0
 
 
 @pytest.mark.anyio
@@ -737,19 +745,21 @@ async def test_multi_worker_shared_presence_suppression(setup_chat_environment):
 
     assert manager.is_user_in_room(recipient.id, room.id) is True
 
-    with patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send:
-        with patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory:
-            mock_session_factory.return_value.__aenter__.return_value = db
-            sent = await push_service.notify_room_recipients(
-                room_id=room.id,
-                sender_id=sender.id,
-                sender_name=sender.name,
-                message_id=uuid.uuid4(),
-                preview_text="Worker B active presence test",
-            )
-            # Push suppressed by multi-worker shared presence
-            assert sent == 0
-            assert mock_send.call_count == 0
+    with (
+        patch("app.modules.chat.push_service.send_push_notification", new_callable=AsyncMock) as mock_send,
+        patch("app.modules.chat.push_service.async_session_factory") as mock_session_factory,
+    ):
+        mock_session_factory.return_value.__aenter__.return_value = db
+        sent = await push_service.notify_room_recipients(
+            room_id=room.id,
+            sender_id=sender.id,
+            sender_name=sender.name,
+            message_id=uuid.uuid4(),
+            preview_text="Worker B active presence test",
+        )
+        # Push suppressed by multi-worker shared presence
+        assert sent == 0
+        assert mock_send.call_count == 0
 
     remove_user_presence(str(recipient.id))
 
